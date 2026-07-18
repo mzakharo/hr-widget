@@ -87,14 +87,19 @@ class HrWidgetView extends Ui.View {
             duration_label = (model.get_range_minutes() / 60).toNumber() + " HOURS";
         }
 
-        // The heart label turns yellow to indicate the low HR alert is enabled.
+        // When the low HR alert is enabled, the label turns yellow and shows
+        // the configured threshold instead of the word "HEART".
         var label_color = alert_enabled ? Graphics.COLOR_YELLOW : fg;
+        var heart_label = alert_enabled
+            ? ("< " + alert_threshold) : "HEART";
+        var hr_label = alert_enabled
+            ? ("< " + alert_threshold) : "HR";
 
         // TODO this is maybe just a tiny bit too ad-hoc
         if (dc.getWidth() == 218 && dc.getHeight() == 218) {
             // Fenix 3
             dc.setColor(label_color, Graphics.COLOR_TRANSPARENT);
-            text(dc, 109, 15, Graphics.FONT_TINY, "HEART");
+            text(dc, 109, 15, Graphics.FONT_TINY, heart_label);
             dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
             text(dc, 109, 45, Graphics.FONT_NUMBER_MEDIUM,
                  fmt_num(model.get_current()));
@@ -104,7 +109,7 @@ class HrWidgetView extends Ui.View {
         } else if (dc.getWidth() == 205 && dc.getHeight() == 148) {
             // Vivoactive, FR920xt, Epix
             dc.setColor(label_color, Graphics.COLOR_TRANSPARENT);
-            text(dc, 70, 25, Graphics.FONT_MEDIUM, "HR");
+            text(dc, 70, 25, Graphics.FONT_MEDIUM, hr_label);
             dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
             text(dc, 120, 25, Graphics.FONT_NUMBER_MEDIUM,
                  fmt_num(model.get_current()));
@@ -116,7 +121,7 @@ class HrWidgetView extends Ui.View {
             var w = dc.getWidth();
             var h = dc.getHeight();
             dc.setColor(label_color, Graphics.COLOR_TRANSPARENT);
-            text(dc, w / 2, h * 7 / 100, Graphics.FONT_TINY, "HEART");
+            text(dc, w / 2, h * 7 / 100, Graphics.FONT_TINY, heart_label);
             dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
             text(dc, w / 2, h * 21 / 100, Graphics.FONT_NUMBER_MEDIUM,
                  fmt_num(model.get_current()));
