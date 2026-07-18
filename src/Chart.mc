@@ -23,8 +23,6 @@ class Chart {
 
         var width = x2 - x1;
         var height = y2 - y1;
-        var x = x1;
-        var x_next;
         var item;
 
         var min = model.get_min();

@@ -1,0 +1,5 @@
+# Default Connect IQ project used by the Garmin Monkey C VS Code extension.
+# This builds the original widget manifest.
+project.manifest = manifest-widget.xml
+base.sourcePath = src
+base.resourcePath = resources

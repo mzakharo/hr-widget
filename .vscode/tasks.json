@@ -1,0 +1,55 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Connect IQ: Build widget",
+            "type": "shell",
+            "command": "monkeyc",
+            "args": [
+                "-f", "${workspaceFolder}/monkey.jungle",
+                "-o", "${workspaceFolder}/bin/hr-widget.prg",
+                "-y", "${input:developerKey}",
+                "-d", "${input:deviceId}"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": "$monkeyc",
+            "presentation": {
+                "reveal": "always",
+                "clear": true
+            }
+        },
+        {
+            "label": "Connect IQ: Build watch app",
+            "type": "shell",
+            "command": "monkeyc",
+            "args": [
+                "-f", "${workspaceFolder}/app.jungle",
+                "-o", "${workspaceFolder}/bin/hr-app.prg",
+                "-y", "${input:developerKey}",
+                "-d", "${input:deviceId}"
+            ],
+            "group": "build",
+            "problemMatcher": "$monkeyc",
+            "presentation": {
+                "reveal": "always",
+                "clear": true
+            }
+        }
+    ],
+    "inputs": [
+        {
+            "id": "deviceId",
+            "type": "promptString",
+            "description": "Connect IQ device ID",
+            "default": "fenix3"
+        },
+        {
+            "id": "developerKey",
+            "type": "promptString",
+            "description": "Absolute path to your Connect IQ developer key (.der)"
+        }
+    ]
+}

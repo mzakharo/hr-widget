@@ -14,11 +14,11 @@ enum
 }
 
 class HrWidgetApp extends App.AppBase {
-    function onStart() {
+    function onStart(state) {
         view = new HrWidgetView();
     }
 
-    function onStop() {
+    function onStop(state) {
         // Write here for the app case
         model.write_data();
     }

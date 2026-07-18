@@ -81,6 +81,17 @@ class HrWidgetView extends Ui.View {
             text(dc, 102, 135, Graphics.FONT_XTINY, duration_label);
             chart.draw(dc, [10, 45, 195, 120], fg, Graphics.COLOR_RED,
                        30, true, true, false, self);
+        } else {
+            // Generic layout, scaled to the device (e.g. Forerunner 970, 454x454)
+            var w = dc.getWidth();
+            var h = dc.getHeight();
+            text(dc, w / 2, h * 7 / 100, Graphics.FONT_TINY, "HEART");
+            text(dc, w / 2, h * 21 / 100, Graphics.FONT_NUMBER_MEDIUM,
+                 fmt_num(model.get_current()));
+            text(dc, w / 2, h * 88 / 100, Graphics.FONT_XTINY, duration_label);
+            chart.draw(dc, [w * 11 / 100, h * 34 / 100,
+                            w * 89 / 100, h * 79 / 100],
+                       fg, Graphics.COLOR_RED, 30, true, true, false, self);
         }
     }
 
@@ -106,7 +117,7 @@ class HrWidgetView extends Ui.View {
                        new Attention.VibeProfile( 50, 100),
                        new Attention.VibeProfile( 25, 100)];
 
-    function onSensor(sensorInfo) {
+    function onSensor(sensorInfo as Sensor.Info) as Void {
         if (sensorInfo.heartRate != null && !have_connected) {
             if (Attention has :playTone) {
                 Attention.playTone(Attention.TONE_START);
@@ -135,14 +146,13 @@ class MenuDelegate extends Ui.MenuInputDelegate {
         if (item == :set_period) {
             Ui.pushView(new Rez.Menus.PeriodMenu(), new PeriodMenuDelegate(),
                         Ui.SLIDE_LEFT);
-            return true;
+            return;
         }
         else if (item == :swap_colors) {
             view.toggle_colors();
-            return true;
+            return;
         } 
         Ui.popView(Ui.SLIDE_RIGHT);
-        return true;
     }
 }
 
@@ -179,6 +189,5 @@ class PeriodMenuDelegate extends Ui.MenuInputDelegate {
             model.set_range_minutes(1440);
         }
         Ui.popView(Ui.SLIDE_RIGHT);
-        return true;
     } 
 }

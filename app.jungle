@@ -1,0 +1,4 @@
+# Alternate project definition for building the watch-app variant.
+project.manifest = manifest-app.xml
+base.sourcePath = src
+base.resourcePath = resources
