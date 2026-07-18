@@ -10,7 +10,9 @@ enum
     LAST_VALUES,
     LAST_VALUE_TIME,
     RANGE_MULT,
-    INVERT
+    INVERT,
+    ALERT_ENABLED,
+    ALERT_THRESHOLD
 }
 
 class HrWidgetApp extends App.AppBase {

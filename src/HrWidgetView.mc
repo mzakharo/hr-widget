@@ -11,9 +11,23 @@ class HrWidgetView extends Ui.View {
     var invert = false;
     var chart;
     var have_connected = false;
+    var alert_enabled = false;
+    var alert_threshold = 80;
+    var alert_active = false;
 
     function toggle_colors() {
         invert = !invert;
+    }
+
+    function toggle_alert() {
+        alert_enabled = !alert_enabled;
+        if (!alert_enabled) {
+            alert_active = false;
+        }
+    }
+
+    function set_alert_threshold(bpm) {
+        alert_threshold = bpm;
     }
 
     //! Load your resources here
@@ -32,6 +46,13 @@ class HrWidgetView extends Ui.View {
             if (app.getProperty(INVERT) == true) {
                 invert = true;
             }
+            if (app.getProperty(ALERT_ENABLED) == true) {
+                alert_enabled = true;
+            }
+            var saved_threshold = app.getProperty(ALERT_THRESHOLD);
+            if (saved_threshold != null) {
+                alert_threshold = saved_threshold;
+            }
         }
 
         Sensor.setEnabledSensors( [Sensor.SENSOR_HEARTRATE] );
@@ -45,6 +66,8 @@ class HrWidgetView extends Ui.View {
         model.write_data();
         var app = App.getApp();
         app.setProperty(INVERT, invert);
+        app.setProperty(ALERT_ENABLED, alert_enabled);
+        app.setProperty(ALERT_THRESHOLD, alert_threshold);
     }
 
     //! Update the view
@@ -64,10 +87,15 @@ class HrWidgetView extends Ui.View {
             duration_label = (model.get_range_minutes() / 60).toNumber() + " HOURS";
         }
 
+        // The heart label turns yellow to indicate the low HR alert is enabled.
+        var label_color = alert_enabled ? Graphics.COLOR_YELLOW : fg;
+
         // TODO this is maybe just a tiny bit too ad-hoc
         if (dc.getWidth() == 218 && dc.getHeight() == 218) {
             // Fenix 3
+            dc.setColor(label_color, Graphics.COLOR_TRANSPARENT);
             text(dc, 109, 15, Graphics.FONT_TINY, "HEART");
+            dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
             text(dc, 109, 45, Graphics.FONT_NUMBER_MEDIUM,
                  fmt_num(model.get_current()));
             text(dc, 109, 192, Graphics.FONT_XTINY, duration_label);
@@ -75,7 +103,9 @@ class HrWidgetView extends Ui.View {
                        30, true, true, false, self);
         } else if (dc.getWidth() == 205 && dc.getHeight() == 148) {
             // Vivoactive, FR920xt, Epix
+            dc.setColor(label_color, Graphics.COLOR_TRANSPARENT);
             text(dc, 70, 25, Graphics.FONT_MEDIUM, "HR");
+            dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
             text(dc, 120, 25, Graphics.FONT_NUMBER_MEDIUM,
                  fmt_num(model.get_current()));
             text(dc, 102, 135, Graphics.FONT_XTINY, duration_label);
@@ -85,7 +115,9 @@ class HrWidgetView extends Ui.View {
             // Generic layout, scaled to the device (e.g. Forerunner 970, 454x454)
             var w = dc.getWidth();
             var h = dc.getHeight();
+            dc.setColor(label_color, Graphics.COLOR_TRANSPARENT);
             text(dc, w / 2, h * 7 / 100, Graphics.FONT_TINY, "HEART");
+            dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
             text(dc, w / 2, h * 21 / 100, Graphics.FONT_NUMBER_MEDIUM,
                  fmt_num(model.get_current()));
             text(dc, w / 2, h * 88 / 100, Graphics.FONT_XTINY, duration_label);
@@ -117,6 +149,42 @@ class HrWidgetView extends Ui.View {
                        new Attention.VibeProfile( 50, 100),
                        new Attention.VibeProfile( 25, 100)];
 
+    var alertVibeData = [new Attention.VibeProfile(100, 400),
+                         new Attention.VibeProfile(  0, 200),
+                         new Attention.VibeProfile(100, 400),
+                         new Attention.VibeProfile(  0, 200),
+                         new Attention.VibeProfile(100, 400)];
+
+    function fire_low_hr_alert() {
+        var settings = System.getDeviceSettings();
+
+        // Play a tone if the device supports tones and the user has them on.
+        if ((Attention has :playTone) && settings.tonesOn) {
+            Attention.playTone(Attention.TONE_ALARM);
+        }
+
+        // Vibrate if the device supports it and vibration is enabled.
+        if ((Attention has :vibrate) && settings.vibrateOn) {
+            Attention.vibrate(alertVibeData);
+        }
+    }
+
+    function check_threshold(hr) {
+        if (!alert_enabled || hr == null) {
+            return;
+        }
+        if (hr < alert_threshold) {
+            // Only fire once per time the HR crosses below the threshold.
+            if (!alert_active) {
+                alert_active = true;
+                fire_low_hr_alert();
+            }
+        }
+        else {
+            alert_active = false;
+        }
+    }
+
     function onSensor(sensorInfo as Sensor.Info) as Void {
         if (sensorInfo.heartRate != null && !have_connected) {
             if (Attention has :playTone) {
@@ -125,6 +193,7 @@ class HrWidgetView extends Ui.View {
             Attention.vibrate(vibrateData);
             have_connected = true;
         }
+        check_threshold(sensorInfo.heartRate);
         model.new_value(sensorInfo.heartRate);
         Ui.requestUpdate();
     }
@@ -151,7 +220,43 @@ class MenuDelegate extends Ui.MenuInputDelegate {
         else if (item == :swap_colors) {
             view.toggle_colors();
             return;
-        } 
+        }
+        else if (item == :toggle_alert) {
+            view.toggle_alert();
+            return;
+        }
+        else if (item == :set_threshold) {
+            Ui.pushView(new Rez.Menus.ThresholdMenu(),
+                        new ThresholdMenuDelegate(), Ui.SLIDE_LEFT);
+            return;
+        }
+        Ui.popView(Ui.SLIDE_RIGHT);
+    }
+}
+
+class ThresholdMenuDelegate extends Ui.MenuInputDelegate {
+    function onMenuItem(item) {
+        if (item == :bpm_70) {
+            view.set_alert_threshold(70);
+        }
+        else if (item == :bpm_75) {
+            view.set_alert_threshold(75);
+        }
+        else if (item == :bpm_80) {
+            view.set_alert_threshold(80);
+        }
+        else if (item == :bpm_85) {
+            view.set_alert_threshold(85);
+        }
+        else if (item == :bpm_90) {
+            view.set_alert_threshold(90);
+        }
+        else if (item == :bpm_95) {
+            view.set_alert_threshold(95);
+        }
+        else if (item == :bpm_100) {
+            view.set_alert_threshold(100);
+        }
         Ui.popView(Ui.SLIDE_RIGHT);
     }
 }
