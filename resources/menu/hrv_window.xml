@@ -1,0 +1,6 @@
+<menu id="HrvWindowMenu" title="HRV Window">
+  <menu-item id="win_30" label="30 seconds" />
+  <menu-item id="win_60" label="60 seconds" />
+  <menu-item id="win_120" label="2 minutes" />
+  <menu-item id="win_300" label="5 minutes" />
+</menu>

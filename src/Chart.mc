@@ -94,9 +94,10 @@ class Chart {
         return (x - orig_x) * (size - 1) / width;
     }
 
-    function item_y(item as Number, orig_y as Number, height as Number, min as Number, max as Number) as Number {
+    function item_y(item as Numeric, orig_y as Numeric, height as Numeric, min as Numeric, max as Numeric) as Numeric {
         return orig_y - height * (item - min) / (max - min);
     }
+
 
     function label_text(dc as Dc, x as Number, y as Number,
                         x1y1x2y2 as Array<Number>, fg as Number, bg as Number,
