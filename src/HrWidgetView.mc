@@ -1,77 +1,81 @@
 // -*- mode: Javascript;-*-
 
-using Toybox.Graphics;
+import Toybox.Lang;
+import Toybox.Graphics;
 using Toybox.Sensor as Sensor;
 using Toybox.System as System;
 using Toybox.WatchUi as Ui;
 using Toybox.Application as App;
+using Toybox.Application.Storage;
 using Toybox.Attention as Attention;
 
 class HrWidgetView extends Ui.View {
-    var invert = false;
-    var chart;
-    var have_connected = false;
-    var alert_enabled = false;
-    var alert_threshold = 80;
-    var alert_active = false;
+    var invert as Boolean = false;
+    var chart as Chart or Null;
+    var have_connected as Boolean = false;
+    var alert_enabled as Boolean = false;
+    var alert_threshold as Number = 80;
+    var alert_active as Boolean = false;
 
-    function toggle_colors() {
+    function initialize() {
+        View.initialize();
+    }
+
+    function toggle_colors() as Void {
         invert = !invert;
     }
 
-    function toggle_alert() {
+    function toggle_alert() as Void {
         alert_enabled = !alert_enabled;
         if (!alert_enabled) {
             alert_active = false;
         }
     }
 
-    function set_alert_threshold(bpm) {
+    function set_alert_threshold(bpm as Number) as Void {
         alert_threshold = bpm;
     }
 
     //! Load your resources here
-    function onLayout(dc) {
+    function onLayout(dc as Dc) as Void {
     }
 
     //! Restore the state of the app and prepare the view to be shown
-    function onShow() {
+    function onShow() as Void {
         if (model == null) {
             model = new PersistentChartModel();
             model.read_data();
 
             chart = new Chart(model);
 
-            var app = App.getApp();
-            if (app.getProperty(INVERT) == true) {
+            if (Storage.getValue(INVERT) == true) {
                 invert = true;
             }
-            if (app.getProperty(ALERT_ENABLED) == true) {
+            if (Storage.getValue(ALERT_ENABLED) == true) {
                 alert_enabled = true;
             }
-            var saved_threshold = app.getProperty(ALERT_THRESHOLD);
+            var saved_threshold = Storage.getValue(ALERT_THRESHOLD);
             if (saved_threshold != null) {
-                alert_threshold = saved_threshold;
+                alert_threshold = saved_threshold as Number;
             }
         }
 
-        Sensor.setEnabledSensors( [Sensor.SENSOR_HEARTRATE] );
+        Sensor.setEnabledSensors( [Sensor.SENSOR_HEARTRATE] as Array<Sensor.SensorType> );
         Sensor.enableSensorEvents( method(:onSensor) );
     }
 
     //! Called when this View is removed from the screen. Save the
     //! state of your app here.
-    function onHide() {
+    function onHide() as Void {
         // Write here for the widget case
         model.write_data();
-        var app = App.getApp();
-        app.setProperty(INVERT, invert);
-        app.setProperty(ALERT_ENABLED, alert_enabled);
-        app.setProperty(ALERT_THRESHOLD, alert_threshold);
+        Storage.setValue(INVERT, invert);
+        Storage.setValue(ALERT_ENABLED, alert_enabled);
+        Storage.setValue(ALERT_THRESHOLD, alert_threshold);
     }
 
     //! Update the view
-    function onUpdate(dc) {
+    function onUpdate(dc as Dc) as Void {
         var fg = invert ? Graphics.COLOR_BLACK : Graphics.COLOR_WHITE;
         var bg = invert ? Graphics.COLOR_WHITE : Graphics.COLOR_BLACK;
 
@@ -104,7 +108,7 @@ class HrWidgetView extends Ui.View {
             text(dc, 109, 45, Graphics.FONT_NUMBER_MEDIUM,
                  fmt_num(model.get_current()));
             text(dc, 109, 192, Graphics.FONT_XTINY, duration_label);
-            chart.draw(dc, [23, 75, 195, 172], fg, Graphics.COLOR_RED,
+            chart.draw(dc, [23, 75, 195, 172] as Array<Number>, fg, Graphics.COLOR_RED,
                        30, true, true, false, self);
         } else if (dc.getWidth() == 205 && dc.getHeight() == 148) {
             // Vivoactive, FR920xt, Epix
@@ -114,7 +118,7 @@ class HrWidgetView extends Ui.View {
             text(dc, 120, 25, Graphics.FONT_NUMBER_MEDIUM,
                  fmt_num(model.get_current()));
             text(dc, 102, 135, Graphics.FONT_XTINY, duration_label);
-            chart.draw(dc, [10, 45, 195, 120], fg, Graphics.COLOR_RED,
+            chart.draw(dc, [10, 45, 195, 120] as Array<Number>, fg, Graphics.COLOR_RED,
                        30, true, true, false, self);
         } else {
             // Generic layout, scaled to the device (e.g. Forerunner 970, 454x454)
@@ -127,12 +131,12 @@ class HrWidgetView extends Ui.View {
                  fmt_num(model.get_current()));
             text(dc, w / 2, h * 88 / 100, Graphics.FONT_XTINY, duration_label);
             chart.draw(dc, [w * 11 / 100, h * 34 / 100,
-                            w * 89 / 100, h * 79 / 100],
+                            w * 89 / 100, h * 79 / 100] as Array<Number>,
                        fg, Graphics.COLOR_RED, 30, true, true, false, self);
         }
     }
 
-    function fmt_num(num) {
+    function fmt_num(num as Number or Null) as String {
         if (num == null) {
             return "---";
         }
@@ -141,7 +145,8 @@ class HrWidgetView extends Ui.View {
         }
     }
 
-    function text(dc, x, y, font, s) {
+    function text(dc as Dc, x as Number, y as Number,
+                  font as FontDefinition, s as String) as Void {
         dc.drawText(x, y, font, s,
                     Graphics.TEXT_JUSTIFY_CENTER|Graphics.TEXT_JUSTIFY_VCENTER);
     }
@@ -152,15 +157,15 @@ class HrWidgetView extends Ui.View {
                        new Attention.VibeProfile(100, 100),
                        new Attention.VibeProfile( 75, 100),
                        new Attention.VibeProfile( 50, 100),
-                       new Attention.VibeProfile( 25, 100)];
+                       new Attention.VibeProfile( 25, 100)] as Array<Attention.VibeProfile>;
 
     var alertVibeData = [new Attention.VibeProfile(100, 400),
                          new Attention.VibeProfile(  0, 200),
                          new Attention.VibeProfile(100, 400),
                          new Attention.VibeProfile(  0, 200),
-                         new Attention.VibeProfile(100, 400)];
+                         new Attention.VibeProfile(100, 400)] as Array<Attention.VibeProfile>;
 
-    function fire_low_hr_alert() {
+    function fire_low_hr_alert() as Void {
         var settings = System.getDeviceSettings();
 
         // Play a tone if the device supports tones and the user has them on.
@@ -174,7 +179,7 @@ class HrWidgetView extends Ui.View {
         }
     }
 
-    function check_threshold(hr) {
+    function check_threshold(hr as Number or Null) as Void {
         if (!alert_enabled || hr == null) {
             return;
         }
@@ -205,7 +210,11 @@ class HrWidgetView extends Ui.View {
 }
 
 class HrWidgetDelegate extends Ui.InputDelegate {
-    function onKey(evt) {
+    function initialize() {
+        InputDelegate.initialize();
+    }
+
+    function onKey(evt as Ui.KeyEvent) as Boolean {
         if (evt.getKey() == Ui.KEY_ENTER) {
             Ui.pushView(new Rez.Menus.MainMenu(), new MenuDelegate(),
                         Ui.SLIDE_LEFT);
@@ -216,7 +225,11 @@ class HrWidgetDelegate extends Ui.InputDelegate {
 }
 
 class MenuDelegate extends Ui.MenuInputDelegate {
-    function onMenuItem(item) {
+    function initialize() {
+        MenuInputDelegate.initialize();
+    }
+
+    function onMenuItem(item as Symbol) as Void {
         if (item == :set_period) {
             Ui.pushView(new Rez.Menus.PeriodMenu(), new PeriodMenuDelegate(),
                         Ui.SLIDE_LEFT);
@@ -240,7 +253,11 @@ class MenuDelegate extends Ui.MenuInputDelegate {
 }
 
 class ThresholdMenuDelegate extends Ui.MenuInputDelegate {
-    function onMenuItem(item) {
+    function initialize() {
+        MenuInputDelegate.initialize();
+    }
+
+    function onMenuItem(item as Symbol) as Void {
         if (item == :bpm_70) {
             view.set_alert_threshold(70);
         }
@@ -267,7 +284,11 @@ class ThresholdMenuDelegate extends Ui.MenuInputDelegate {
 }
 
 class PeriodMenuDelegate extends Ui.MenuInputDelegate {
-    function onMenuItem(item) {
+    function initialize() {
+        MenuInputDelegate.initialize();
+    }
+
+    function onMenuItem(item as Symbol) as Void {
         if (item == :min_2) {
             model.set_range_minutes(2.5);
         }

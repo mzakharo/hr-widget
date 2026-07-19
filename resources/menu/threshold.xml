@@ -1,9 +1,9 @@
 <menu id="ThresholdMenu" title="Alert Threshold">
-  <menu-item id="bpm_70">70 bpm</menu-item>
-  <menu-item id="bpm_75">75 bpm</menu-item>
-  <menu-item id="bpm_80">80 bpm</menu-item>
-  <menu-item id="bpm_85">85 bpm</menu-item>
-  <menu-item id="bpm_90">90 bpm</menu-item>
-  <menu-item id="bpm_95">95 bpm</menu-item>
-  <menu-item id="bpm_100">100 bpm</menu-item>
+  <menu-item id="bpm_70" label="70 bpm" />
+  <menu-item id="bpm_75" label="75 bpm" />
+  <menu-item id="bpm_80" label="80 bpm" />
+  <menu-item id="bpm_85" label="85 bpm" />
+  <menu-item id="bpm_90" label="90 bpm" />
+  <menu-item id="bpm_95" label="95 bpm" />
+  <menu-item id="bpm_100" label="100 bpm" />
 </menu>

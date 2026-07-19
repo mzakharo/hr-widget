@@ -1,5 +1,5 @@
 <iq:manifest xmlns:iq="http://www.garmin.com/xml/connectiq" version="1">
-    <iq:application entry="HrWidgetApp" id="157cb1358ea940a3b291b4fc9cd96f2a" launcherIcon="LauncherIcon" name="AppName" type="watch-app">
+    <iq:application entry="HrWidgetApp" id="157cb1358ea940a3b291b4fc9cd96f2a" launcherIcon="@Drawables.LauncherIcon" name="@Strings.AppName" type="watch-app">
 
         <iq:products>
             <iq:product id="fenix3"/>

@@ -1,16 +1,20 @@
 // -*- mode: Javascript;-*-
 
-class Chart {
-    var model;
+import Toybox.Lang;
+import Toybox.Graphics;
 
-    function initialize(a_model) {
+class Chart {
+    var model as ChartModel;
+
+    function initialize(a_model as ChartModel) {
         model = a_model;
     }
 
-    function draw(dc, x1y1x2y2,
-                  line_color, block_color,
-                  range_min_size, draw_min_max, draw_axes,
-                  strict_min_max_bounding, formatter) {
+    function draw(dc as Dc, x1y1x2y2 as Array<Number>,
+                  line_color as Number, block_color as Number,
+                  range_min_size as Number, draw_min_max as Boolean,
+                  draw_axes as Boolean, strict_min_max_bounding as Boolean,
+                  formatter) as Void {
         // Work around 10 arg limit!
         var x1 = x1y1x2y2[0];
         var y1 = x1y1x2y2[1];
@@ -34,15 +38,16 @@ class Chart {
             range_max = range_min + range_min_size;
         }
 
-        var x_old = null;
-        var y_old = null;
+        var has_prev = false;
+        var x_old = 0;
+        var y_old = 0;
         for (var x = x1; x <= x2; x++) {
             item = data[x_item(x, x1, width, data.size())];
             if (item != null) {
                 var y = item_y(item, y2, height, range_min, range_max);
                 dc.setColor(block_color, Graphics.COLOR_TRANSPARENT);
                 dc.drawLine(x, y, x, y2);
-                if (x_old != null) {
+                if (has_prev) {
                     dc.setColor(line_color, Graphics.COLOR_TRANSPARENT);
                     dc.drawLine(x_old, y_old, x, y);
                     // TODO is the below line needed due to a CIQ bug
@@ -51,12 +56,13 @@ class Chart {
                 }
                 x_old = x;
                 y_old = y;
+                has_prev = true;
             }
             else {
-                x_old = null;
-                y_old = null;
+                has_prev = false;
             }
         }
+
 
         if (draw_min_max and model.get_min_max_interesting()) {
             dc.setColor(line_color, Graphics.COLOR_TRANSPARENT);
@@ -80,19 +86,21 @@ class Chart {
         }
     }
 
-    function item_x(i, orig_x, width, size) {
+    function item_x(i as Number, orig_x as Number, width as Number, size as Number) as Number {
         return orig_x + i * width / (size - 1);
     }
 
-    function x_item(x, orig_x, width, size) {
+    function x_item(x as Number, orig_x as Number, width as Number, size as Number) as Number {
         return (x - orig_x) * (size - 1) / width;
     }
 
-    function item_y(item, orig_y, height, min, max) {
+    function item_y(item as Number, orig_y as Number, height as Number, min as Number, max as Number) as Number {
         return orig_y - height * (item - min) / (max - min);
     }
 
-    function label_text(dc, x, y, x1y1x2y2, fg, bg, txt, strict, above) {
+    function label_text(dc as Dc, x as Number, y as Number,
+                        x1y1x2y2 as Array<Number>, fg as Number, bg as Number,
+                        txt as String, strict as Boolean, above as Boolean) as Void {
         var x1 = x1y1x2y2[0];
         var y1 = x1y1x2y2[1];
         var x2 = x1y1x2y2[2];
@@ -122,7 +130,9 @@ class Chart {
         text_outline(dc, x, y, fg, bg, Graphics.FONT_XTINY, txt);
     }
 
-    function text_outline(dc, x, y, fg, bg, font, s) {
+    function text_outline(dc as Dc, x as Number, y as Number,
+                          fg as Number, bg as Number, font as FontDefinition,
+                          s as String) as Void {
         dc.setColor(bg, Graphics.COLOR_TRANSPARENT);
         dc.drawText(x-2, y, font, s, Graphics.TEXT_JUSTIFY_LEFT);
         dc.drawText(x+2, y, font, s, Graphics.TEXT_JUSTIFY_LEFT);
@@ -132,7 +142,8 @@ class Chart {
         dc.drawText(x, y, font, s, Graphics.TEXT_JUSTIFY_LEFT);
     }
 
-    function tick_line(dc, c, end1, end2, tick_size, vert) {
+    function tick_line(dc as Dc, c as Number, end1 as Number,
+                       end2 as Number, tick_size as Number, vert as Boolean) as Void {
         tick_line0(dc, c, end1, end2, vert);
         for (var n = 1; n <= 3; n++) {
             tick_line0(dc, ((4 - n) * end1 + n * end2) / 4, c, c + tick_size,
@@ -140,7 +151,8 @@ class Chart {
         }
     }
 
-    function tick_line0(dc, c, end1, end2, vert) {
+    function tick_line0(dc as Dc, c as Number, end1 as Number,
+                        end2 as Number, vert as Boolean) as Void {
         if (vert) {
             dc.drawLine(c, end1, c, end2);
         } else {
