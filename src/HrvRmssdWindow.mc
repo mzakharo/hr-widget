@@ -1,42 +1,44 @@
 // -*- mode: Javascript;-*-
-// Burst RMSSD calculator with light artifact filtering.
+// Sliding-window RMSSD calculator with light artifact filtering.
 //
 // Formula (Kubios / Task Force of ESC/NASPE):
 //   RMSSD = sqrt( 1/(N-1) * sum_{i=1}^{N-1} (NN[i+1] - NN[i])^2 )
 // where NN are accepted normal-to-normal intervals in ms.
 //
-// Optical PPG delivers RR in short bursts of variable length. This calculator
-// accumulates NN beats for the current burst. If a burst runs longer than
-// HRV_ROLL_SECONDS, older NN samples roll off so RMSSD always reflects the
-// most recent window of the burst. The caller resets between bursts.
+// Filtering for optical PPG (stricter than the original light gate):
+//   1) Physiological range: drop RR outside 300–1500 ms (~200–40 bpm).
+//   2) Successive-change: drop RR that jumps more than 25% from the last
+//      accepted RR (ECG-style; rejects motion/ectopic spikes more aggressively).
+//   3) Publish once the time window is full and we have enough accepted
+//      NN samples. Rejected beats are simply omitted from the NN series.
 
 import Toybox.Lang;
 import Toybox.Math;
 
 // Physiological RR bounds (ms).
-const RR_MIN_MS = 250.0;
-const RR_MAX_MS = 2000.0;
+const RR_MIN_MS = 300.0;
+const RR_MAX_MS = 1500.0;
 
-// Max fractional change vs previous accepted RR (50% — PPG-friendly).
-const RR_MAX_CHANGE = 0.50;
+// Max fractional change vs previous accepted RR (25% — ECG-style).
+const RR_MAX_CHANGE = 0.25;
 
-// Minimum accepted NN intervals to publish RMSSD from a burst.
-const HRV_MIN_BEATS = 5;
 
-// Within a long burst, only keep the most recent N seconds of NN data.
-const HRV_ROLL_SECONDS = 30;
+// Fixed rolling window length (seconds).
+const HRV_WINDOW_SECONDS = 60;
+
+// Minimum accepted NN intervals before publishing RMSSD.
+const HRV_MIN_BEATS = 60;
 
 class HrvRmssdWindow {
-    // Accepted NN intervals for the current burst (parallel age array).
+    private var mWindowSeconds as Number = HRV_WINDOW_SECONDS;
+    private var mSecondsCount as Number = 0;
+    // Accepted NN intervals and the second they arrived.
     private var mIntervals as Array<Float> = [] as Array<Float>;
-    private var mAges as Array<Number> = [] as Array<Number>;
+    private var mSecondMarks as Array<Number> = [] as Array<Number>;
     private var mLastAccepted as Float or Null = null;
     private var mLastRmssd as Float or Null = null;
-    // Seconds that contained at least one accepted beat this burst (lifetime).
-    private var mActiveSeconds as Number = 0;
-    private var mHadBeatThisSecond as Boolean = false;
 
-    // Debug counters (lifetime of current burst until reset).
+    // Debug counters (lifetime of this window instance).
     private var mRawBeats as Number = 0;
     private var mAcceptedBeats as Number = 0;
     private var mRejectRange as Number = 0;
@@ -51,9 +53,12 @@ class HrvRmssdWindow {
         return mLastRmssd;
     }
 
-    // How many seconds in this burst had at least one accepted NN (lifetime).
-    function getActiveSeconds() as Number {
-        return mActiveSeconds;
+    function getWindowSeconds() as Number {
+        return mWindowSeconds;
+    }
+
+    function getSecondsCount() as Number {
+        return mSecondsCount;
     }
 
     function getAcceptedCount() as Number {
@@ -88,16 +93,10 @@ class HrvRmssdWindow {
         return HRV_MIN_BEATS;
     }
 
-    function getRollSeconds() as Number {
-        return HRV_ROLL_SECONDS;
-    }
-
     // Feed one second of beat-to-beat intervals (ms).
-    // Ages existing NN by 1 s, drops samples older than HRV_ROLL_SECONDS,
-    // then adds new accepted beats. Returns RMSSD when enough NN remain.
+    // Returns window RMSSD once full and enough NN remain, else null.
     function addOneSecBeatToBeatIntervals(beatToBeatIntervals as Array) as Float or Null {
-        ageAndRoll();
-        mHadBeatThisSecond = false;
+        mSecondsCount++;
 
         if (beatToBeatIntervals != null) {
             for (var i = 0; i < beatToBeatIntervals.size(); i++) {
@@ -129,56 +128,30 @@ class HrvRmssdWindow {
                 }
 
                 mIntervals.add(rr);
-                mAges.add(0);
+                mSecondMarks.add(mSecondsCount);
                 mLastAccepted = rr;
                 mAcceptedBeats++;
-                mHadBeatThisSecond = true;
             }
         }
 
-        if (mHadBeatThisSecond) {
-            mActiveSeconds++;
+        // Drop data older than the rolling window.
+        var cutoff = mSecondsCount - mWindowSeconds;
+        var start = 0;
+        while (start < mSecondMarks.size() && mSecondMarks[start] <= cutoff) {
+            start++;
+        }
+        if (start > 0) {
+            mIntervals = mIntervals.slice(start, null) as Array<Float>;
+            mSecondMarks = mSecondMarks.slice(start, null) as Array<Number>;
         }
 
-        return tryPublish();
-    }
-
-    // Age every buffered NN by 1 s; drop those past the roll window.
-    private function ageAndRoll() as Void {
-        if (mIntervals.size() == 0) {
-            return;
-        }
-        var newIntervals = [] as Array<Float>;
-        var newAges = [] as Array<Number>;
-        for (var i = 0; i < mIntervals.size(); i++) {
-            var age = mAges[i] + 1;
-            if (age < HRV_ROLL_SECONDS) {
-                newIntervals.add(mIntervals[i]);
-                newAges.add(age);
-            }
-        }
-        mIntervals = newIntervals;
-        mAges = newAges;
-        // If the roll window emptied, drop successive-filter anchor.
-        if (mIntervals.size() == 0) {
-            mLastAccepted = null;
-        }
-    }
-
-    // Compute RMSSD from whatever is currently buffered (burst end).
-    function finalize() as Float or Null {
-        return tryPublish();
-    }
-
-    private function tryPublish() as Float or Null {
-        if (mIntervals.size() < HRV_MIN_BEATS) {
+        // Window not full yet, or not enough NN samples.
+        if (mSecondsCount < mWindowSeconds || mIntervals.size() < HRV_MIN_BEATS) {
             return null;
         }
-        var value = calculate();
-        if (value != null) {
-            mLastRmssd = value;
-        }
-        return value;
+
+        mLastRmssd = calculate();
+        return mLastRmssd;
     }
 
     private function calculate() as Float or Null {
@@ -204,23 +177,16 @@ class HrvRmssdWindow {
         return Math.sqrt(sumSquares / count).toFloat();
     }
 
-    // Clear burst buffers. Keeps mLastRmssd so the UI can hold the last value.
     function reset() as Void {
+        mSecondsCount = 0;
         mIntervals = [] as Array<Float>;
-        mAges = [] as Array<Number>;
+        mSecondMarks = [] as Array<Number>;
         mLastAccepted = null;
-        mActiveSeconds = 0;
-        mHadBeatThisSecond = false;
+        mLastRmssd = null;
         mRawBeats = 0;
         mAcceptedBeats = 0;
         mRejectRange = 0;
         mRejectJump = 0;
         mLastRawRr = null;
-    }
-
-    // Full wipe including last published RMSSD.
-    function resetAll() as Void {
-        reset();
-        mLastRmssd = null;
     }
 }

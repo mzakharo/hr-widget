@@ -23,18 +23,13 @@ class HrWidgetView extends Ui.View {
     // Last good HR (bpm). Beat-interval seconds are often empty; hold instead of null gaps.
     var lastHr as Number or Null = null;
     var hrMissedSeconds as Number = 0;
-    // Last good RMSSD — always shown at top until a newer burst computes one.
+    // Last good RMSSD for the big readout.
     var lastHrv as Float or Null = null;
-    // Last completed burst length (active seconds with accepted NN).
-    var lastBurstSeconds as Number = 0;
-    // Empty RR seconds since last non-empty bucket (burst gap detector).
-    var hrvEmptyStreak as Number = 0;
-    // True while we are inside an RR burst (saw beats since last reset).
-    var hrvBurstActive as Boolean = false;
-    // How many empty seconds end a burst and reset the RMSSD buffer.
-    const HRV_BURST_END_EMPTY_SECS = 12;
+    // Fresh RR-derived BPM for the HRV title (null when this second had no RR).
+    var liveRrBpm as Number or Null = null;
 
     // Debug overlay (menu: RR Debug).
+
     var debugMode as Boolean = false;
     var dbgCallbacks as Number = 0;
     var dbgEmptySecs as Number = 0;
@@ -78,10 +73,13 @@ class HrWidgetView extends Ui.View {
         alert_threshold = bpm;
     }
 
-    // Period menu only affects the HR time chart. HRV is a burst-point series.
+    // Chart history period — applies to both HR and HRV time charts.
     function set_range_minutes(range as Float or Number) as Void {
         if (hrModel != null) {
             hrModel.set_range_minutes(range);
+        }
+        if (hrvModel != null) {
+            hrvModel.set_range_minutes(range);
         }
     }
 
@@ -95,13 +93,13 @@ class HrWidgetView extends Ui.View {
             hrModel = new PersistentChartModel("hr_");
             hrModel.read_data();
 
-            // HRV is a discrete burst-point series (not a time window).
-            // Always start with a fresh plot — do not restore prior bursts.
+            // HRV is a continuous time-series chart (same X as HR).
             hrvModel = new PersistentChartModel("hrv_");
-            hrvModel.range_mult = 0;
-            hrvModel.values = new [hrvModel.values_size] as Array<Numeric or Null>;
-            hrvModel.current = null;
-            hrvModel.update_min_max();
+            hrvModel.read_data();
+
+            // Keep both models on the same time range.
+            var range = hrModel.get_range_minutes();
+            hrvModel.set_range_minutes(range);
 
             if (Storage.getValue(INVERT) == true) {
                 invert = true;
@@ -118,9 +116,9 @@ class HrWidgetView extends Ui.View {
                 plot_mode = saved_mode as Number;
             }
 
-            lastHrv = null;
+            lastHrv = findLastNonNull(hrvModel);
             hrModel.current = null;
-
+            hrvModel.current = lastHrv;
 
             if (plot_mode == MODE_HRV) {
                 model = hrvModel;
@@ -132,12 +130,6 @@ class HrWidgetView extends Ui.View {
             hrvWindow = new HrvRmssdWindow();
             lastHr = null;
             hrMissedSeconds = 0;
-            lastBurstSeconds = 0;
-            hrvEmptyStreak = 0;
-            hrvBurstActive = false;
-        } else {
-            // Returning from menu — keep holding last HRV on the readout.
-            holdHrvDisplay();
         }
 
         startSensors();
@@ -220,10 +212,7 @@ class HrWidgetView extends Ui.View {
         dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
 
         var duration_label;
-        if (isHrv) {
-            var n = model.get_point_count();
-            duration_label = n == 1 ? "1 SAMPLE" : (n + " SAMPLES");
-        } else if (model.get_range_minutes() < 60) {
+        if (model.get_range_minutes() < 60) {
             duration_label = model.get_range_minutes().toNumber() + " MINUTES";
         } else {
             duration_label = (model.get_range_minutes() / 60).toNumber() + " HOURS";
@@ -234,20 +223,13 @@ class HrWidgetView extends Ui.View {
         var label_color = (!isHrv && alert_enabled) ? Graphics.COLOR_YELLOW : fg;
         var title_label;
         if (isHrv) {
-            // Effective NN window used for the last valid RMSSD (capped at roll).
-            var win = 0;
-            if (hrvWindow != null) {
-                win = hrvWindow.getRollSeconds();
-            }
-            if (lastBurstSeconds > 0 && lastBurstSeconds < win) {
-                title_label = "HRV " + lastBurstSeconds + "s";
-            } else if (lastHrv != null) {
-                title_label = "HRV " + win + "s";
+            // Live RR-derived BPM only — dashes when this second had no RR stream.
+            if (liveRrBpm != null) {
+                title_label = "HR " + liveRrBpm;
             } else {
-                title_label = "HRV";
+                title_label = "HR ---";
             }
         } else if (alert_enabled) {
-
             title_label = "< " + alert_threshold;
         } else {
             title_label = "HEART";
@@ -255,12 +237,14 @@ class HrWidgetView extends Ui.View {
 
         var short_label;
         if (isHrv) {
-            short_label = "HRV";
+            short_label = liveRrBpm != null ? ("" + liveRrBpm) : "---";
         } else if (alert_enabled) {
+
             short_label = "< " + alert_threshold;
         } else {
             short_label = "HR";
         }
+
 
         // TODO this is maybe just a tiny bit too ad-hoc
         if (dc.getWidth() == 218 && dc.getHeight() == 218) {
@@ -323,22 +307,19 @@ class HrWidgetView extends Ui.View {
         lines.add("hrData:" + (dbgHasHrData ? "yes" : "no"));
         lines.add("bucket n:" + dbgLastBucketCount);
         lines.add("raw RR: " + dbgLastRawLine);
-        lines.add("burst:" + (hrvBurstActive ? "yes" : "no")
-                  + " gap:" + hrvEmptyStreak + "s");
 
         if (hrvWindow != null) {
-            var active = hrvWindow.getActiveSeconds();
+            var sec = hrvWindow.getSecondsCount();
+            var win = hrvWindow.getWindowSeconds();
             var acc = hrvWindow.getAcceptedCount();
             var need = hrvWindow.getMinBeatsRequired();
             var rmssd = hrvWindow.getLastRmssd();
             var lastAcc = hrvWindow.getLastAccepted();
             var lastRaw = hrvWindow.getLastRawRr();
 
-            lines.add("burst:" + active + "s last:" + lastBurstSeconds
-                      + "s roll:" + hrvWindow.getRollSeconds() + "s");
+            lines.add("win:" + sec + "/" + win + "s");
             lines.add("NN now:" + acc + "/" + need
                       + " ok:" + hrvWindow.getAcceptedBeatsTotal());
-
             lines.add("rej rng:" + hrvWindow.getRejectRange()
                       + " jump:" + hrvWindow.getRejectJump());
             lines.add("last raw:" + (lastRaw != null ? lastRaw.toNumber() + "ms" : "-"));
@@ -362,6 +343,8 @@ class HrWidgetView extends Ui.View {
     }
 
     function fmt_num(num as Numeric or Null) as String {
+
+
         if (num == null) {
             return "---";
         }
@@ -549,72 +532,41 @@ class HrWidgetView extends Ui.View {
         Ui.requestUpdate();
     }
 
-    // Rolling 30s HRV update (within optical RR bursts).
-    //   - Feed each 1 Hz RR bucket into the rolling NN window.
-    //   - Every second that yields a valid RMSSD → one chart point.
-    //   - Empty seconds still age the window while a burst is active.
-    //   - After HRV_BURST_END_EMPTY_SECS empty seconds, reset for the next burst.
-    //   - Chart x-axis is sample index (1 Hz while valid), not wall-clock gaps.
+    // Continuous 60s rolling-window HRV (time-series chart, same X as HR).
+    // Every second advances the window. RMSSD is published only after the
+    // window is full and ≥60 accepted NN samples are present.
     function updateHrv(intervals as Array) as Void {
         if (hrvModel == null || hrvWindow == null) {
             return;
         }
 
-        var hasBeats = intervals != null && intervals.size() > 0;
-
-        if (hasBeats) {
-            hrvEmptyStreak = 0;
-            hrvBurstActive = true;
-            publishHrvSample(intervals);
-            return;
-        }
-
-        // Empty RR second.
-        hrvEmptyStreak++;
-
-        if (hrvBurstActive) {
-            // Age the 30s window even without new beats; plot if still valid.
-            publishHrvSample([] as Array);
-
-            if (hrvEmptyStreak >= HRV_BURST_END_EMPTY_SECS) {
-                hrvWindow.reset();
-                hrvBurstActive = false;
-                hrvEmptyStreak = 0;
+        // Title BPM is a live stream indicator: only set when this second
+        // delivered at least one RR interval; otherwise clear to dashes.
+        if (intervals != null && intervals.size() > 0) {
+            var lastInterval = intervals[intervals.size() - 1];
+            if (lastInterval != null && lastInterval > 0) {
+                liveRrBpm = Math.round(60000.0 / lastInterval.toFloat()).toNumber();
+            } else {
+                liveRrBpm = null;
             }
-            return;
-        }
-
-        // Between bursts: hold the last value on the readout only.
-        holdHrvDisplay();
-    }
-
-    // Feed one second into the RMSSD window. On valid RMSSD, update readout
-    // and append a chart point. Otherwise hold the previous readout.
-    function publishHrvSample(intervals as Array) as Void {
-        if (hrvWindow == null || hrvModel == null) {
-            return;
+        } else {
+            liveRrBpm = null;
         }
 
         var rmssd = hrvWindow.addOneSecBeatToBeatIntervals(intervals);
+
         if (rmssd != null) {
             var rounded = Math.round(rmssd * 10.0) / 10.0;
             lastHrv = rounded;
-            // Effective window fill for the title (capped at roll length).
-            var active = hrvWindow.getActiveSeconds();
-            var roll = hrvWindow.getRollSeconds();
-            lastBurstSeconds = active < roll ? active : roll;
-            hrvModel.append_value(rounded);
+            hrvModel.new_value(rounded);
+        } else if (hrvWindow.getSecondsCount() >= hrvWindow.getWindowSeconds()) {
+            // Window full but not enough NN — plot a gap, keep last readout.
+            hrvModel.new_value(null);
+            if (lastHrv != null) {
+                hrvModel.current = lastHrv;
+            }
         } else {
-            holdHrvDisplay();
-        }
-    }
-
-
-
-    // Keep the large numeric readout on the last computed HRV forever
-    // (until a newer burst produces a value). Does not advance chart history.
-    function holdHrvDisplay() as Void {
-        if (hrvModel != null) {
+            // Warmup — no chart advance of a value yet; hold readout blank.
             hrvModel.current = lastHrv;
         }
     }
