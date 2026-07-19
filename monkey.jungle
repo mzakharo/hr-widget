@@ -1,5 +1,9 @@
 # Default Connect IQ project used by the Garmin Monkey C VS Code extension.
-# This builds the original widget manifest.
-project.manifest = manifest-widget.xml
+# Watch-app gets continuous optical RR more reliably than a widget
+# (widgets are power-throttled; RR often arrives in ~30s bursts).
+# Use app.jungle / manifest-widget.xml only if you specifically need a widget.
+project.manifest = manifest-app.xml
 base.sourcePath = src
 base.resourcePath = resources
+
+

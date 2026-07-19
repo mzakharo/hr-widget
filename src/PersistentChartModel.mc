@@ -23,59 +23,78 @@ class PersistentChartModel extends ChartModel {
 
     function read_data() as Void {
         try {
-            var old_range_mult = Storage.getValue(key(RANGE_MULT));
-            if (old_range_mult != null) {
-                range_mult = old_range_mult as Number or Float;
-            } else {
-                // Fall back to shared range so HR/HRV stay in sync on first run.
-                var shared = Storage.getValue(RANGE_MULT);
-                if (shared != null) {
-                    range_mult = shared as Number or Float;
+            // Caller may pre-set range_mult = 0 for point-series (HRV bursts).
+            var pointSeries = (range_mult != null && range_mult.toFloat() <= 0);
+
+            if (!pointSeries) {
+                var old_range_mult = Storage.getValue(key(RANGE_MULT));
+                if (old_range_mult != null) {
+                    range_mult = old_range_mult as Number or Float;
                 } else {
+                    // Fall back to shared range so HR stays consistent on first run.
+                    var shared = Storage.getValue(RANGE_MULT);
+                    if (shared != null) {
+                        range_mult = shared as Number or Float;
+                    } else {
+                        range_mult = 1;
+                    }
+                }
+
+                // Guard against corrupt / zero range in time-series mode.
+                if (range_mult == null || range_mult.toFloat() <= 0) {
                     range_mult = 1;
                 }
-            }
-
-            // Guard against corrupt / zero range.
-            if (range_mult == null || range_mult.toFloat() <= 0) {
-                range_mult = 1;
+            } else {
+                // Keep point-series marker; still persist 0 on write.
+                range_mult = 0;
             }
 
             var old_values = Storage.getValue(key(LAST_VALUES)) as Array or Null;
             var old_time = Storage.getValue(key(LAST_VALUE_TIME));
             values = new[values_size] as Array<Numeric or Null>;
 
-            if (old_values != null && old_time != null) {
-                // Integer seconds elapsed, then bins shifted (floor).
-                var elapsedMs = System.getTimer() - (old_time as Number);
-                // Timer resets on reboot → negative; drop stale history.
-                if (elapsedMs >= 0) {
-                    var elapsedSec = elapsedMs / 1000;
-                    var mult = range_mult.toFloat();
-                    var delta = (elapsedSec.toFloat() / mult).toNumber();
-                    if (delta < 0) {
-                        delta = 0;
+            if (old_values != null) {
+                var srcSize = old_values.size();
+                if (pointSeries) {
+                    // Point-series mode (HRV bursts): restore slots as-is, no time aging.
+                    var copyN = srcSize < values_size ? srcSize : values_size;
+                    for (var i = 0; i < copyN; i++) {
+                        values[i] = decodeStored(old_values[i]);
                     }
-                    if (delta < values_size) {
-                        var srcSize = old_values.size();
-                        for (var i = 0; i < values_size - delta; i++) {
-                            var srcIdx = i + delta;
-                            if (srcIdx >= 0 && srcIdx < srcSize) {
-                                values[i] = decodeStored(old_values[srcIdx]);
+                } else if (old_time != null) {
+                    // Time-series mode (HR): age bins by elapsed wall time.
+                    var elapsedMs = System.getTimer() - (old_time as Number);
+                    // Timer resets on reboot → negative; drop stale history.
+                    if (elapsedMs >= 0) {
+                        var elapsedSec = elapsedMs / 1000;
+                        var mult = range_mult.toFloat();
+                        var delta = (elapsedSec.toFloat() / mult).toNumber();
+                        if (delta < 0) {
+                            delta = 0;
+                        }
+                        if (delta < values_size) {
+                            for (var j = 0; j < values_size - delta; j++) {
+                                var srcIdx = j + delta;
+                                if (srcIdx >= 0 && srcIdx < srcSize) {
+                                    values[j] = decodeStored(old_values[srcIdx]);
+                                }
                             }
                         }
+                        // else: everything aged out → leave all null
                     }
-                    // else: everything aged out → leave all null
                 }
             }
         } catch (ex) {
             values = new[values_size] as Array<Numeric or Null>;
-            range_mult = 1;
+            if (range_mult == null || range_mult.toFloat() < 0) {
+                range_mult = 1;
+            }
         }
 
         current = null;
         update_min_max();
     }
+
 
     function write_data() as Void {
         try {
@@ -102,8 +121,11 @@ class PersistentChartModel extends ChartModel {
             Storage.setValue(key(LAST_VALUES), stored);
             Storage.setValue(key(LAST_VALUE_TIME), System.getTimer());
             Storage.setValue(key(RANGE_MULT), range_mult);
-            // Keep a shared range key so both models stay aligned.
-            Storage.setValue(RANGE_MULT, range_mult);
+            // Shared range key is for the HR time chart only.
+            if (range_mult != null && range_mult.toFloat() > 0) {
+                Storage.setValue(RANGE_MULT, range_mult);
+            }
+
         } catch (ex) {
             // Avoid crashing the app on hide/stop if storage fails.
         }

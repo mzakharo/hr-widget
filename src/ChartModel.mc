@@ -69,6 +69,7 @@ class ChartModel {
     }
 
 
+    // Time-based rolling sample (HR). range_mult seconds per chart slot.
     function new_value(new_value as Numeric or Null) as Void {
         if (values == null) {
             values = new[values_size] as Array<Numeric or Null>;
@@ -88,6 +89,36 @@ class ChartModel {
         }
 
         update_min_max();
+    }
+
+    // Append one discrete point immediately (HRV burst series).
+    // Shifts the ring buffer left and writes the new value at the end.
+    function append_value(new_value as Numeric or Null) as Void {
+        if (values == null) {
+            values = new[values_size] as Array<Numeric or Null>;
+        }
+
+        current = new_value;
+        for (var i = 1; i < values.size(); i++) {
+            values[i - 1] = values[i];
+        }
+        values[values.size() - 1] = current;
+        range_mult_count = 0;
+        update_min_max();
+    }
+
+    // Count of non-null points currently in the buffer.
+    function get_point_count() as Number {
+        if (values == null) {
+            return 0;
+        }
+        var n = 0;
+        for (var i = 0; i < values.size(); i++) {
+            if (values[i] != null) {
+                n++;
+            }
+        }
+        return n;
     }
 
     function update_min_max() as Void {

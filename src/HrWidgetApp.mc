@@ -16,14 +16,12 @@ const INVERT = "invert";
 const ALERT_ENABLED = "alert_enabled";
 const ALERT_THRESHOLD = "alert_threshold";
 const PLOT_MODE = "plot_mode";
-const HRV_WINDOW = "hrv_window";
+
+
 
 // Plot modes
 const MODE_HR = 0;
 const MODE_HRV = 1;
-
-// Default rolling RMSSD window (seconds). User can change via menu.
-const HRV_WINDOW_DEFAULT = 60;
 
 
 class HrWidgetApp extends App.AppBase {
@@ -36,12 +34,10 @@ class HrWidgetApp extends App.AppBase {
     }
 
     function onStop(state) {
-        // Ensure sensors are released when the process ends (menu may have
-        // kept them running while stacked over the main view).
         if (view != null) {
-            view.keepSensorsForMenu = false;
             view.stopSensors();
         }
+
         // Write here for the app case
         if (hrModel != null) {
             hrModel.write_data();
@@ -50,7 +46,6 @@ class HrWidgetApp extends App.AppBase {
             hrvModel.write_data();
         }
     }
-
 
     function getInitialView() {
         return [view, new HrWidgetDelegate()];

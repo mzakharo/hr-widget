@@ -1,7 +1,6 @@
 <menu id="MainMenu" title="Heart Widget">
   <menu-item id="set_period" label="Set Period" />
   <menu-item id="toggle_mode" label="HR / HRV Mode" />
-  <menu-item id="set_hrv_window" label="HRV Window" />
   <menu-item id="toggle_debug" label="RR Debug" />
   <menu-item id="swap_colors" label="Swap Colors" />
 
