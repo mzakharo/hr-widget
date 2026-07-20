@@ -9,15 +9,21 @@ using Toybox.Application as App;
 using Toybox.Application.Storage;
 using Toybox.Attention as Attention;
 using Toybox.Math as Math;
+using Toybox.Time as Time;
 
 class HrWidgetView extends Ui.View {
     var invert as Boolean = false;
     var chart as Chart or Null;
     var have_connected as Boolean = false;
     var alert_enabled as Boolean = false;
-    var alert_threshold as Number = 80;
+    var alert_threshold as Number = 40;
     var alert_active as Boolean = false;
-    var plot_mode as Number = MODE_HR;
+    // Epoch seconds of last alert fire; used for 60s cooldown.
+    var alert_last_fire as Number = 0;
+
+    // Fresh install defaults to HRV chart.
+    var plot_mode as Number = MODE_HRV;
+
     var hrvWindow as HrvRmssdWindow or Null;
     var usingBeatIntervals as Boolean = false;
     // Last good HR (bpm). Beat-interval seconds are often empty; hold instead of null gaps.
@@ -49,8 +55,12 @@ class HrWidgetView extends Ui.View {
         alert_enabled = !alert_enabled;
         if (!alert_enabled) {
             alert_active = false;
+        } else {
+            // Evaluate immediately when turning alert on.
+            check_hrv_threshold();
         }
     }
+
 
     function toggle_mode() as Void {
         if (plot_mode == MODE_HR) {
@@ -69,9 +79,12 @@ class HrWidgetView extends Ui.View {
         debugMode = !debugMode;
     }
 
-    function set_alert_threshold(bpm as Number) as Void {
-        alert_threshold = bpm;
+    function set_alert_threshold(value as Number) as Void {
+        alert_threshold = value;
+        // Re-evaluate immediately against current chart average.
+        check_hrv_threshold();
     }
+
 
     // Chart history period — applies to both HR and HRV time charts.
     function set_range_minutes(range as Float or Number) as Void {
@@ -218,9 +231,7 @@ class HrWidgetView extends Ui.View {
             duration_label = (model.get_range_minutes() / 60).toNumber() + " HOURS";
         }
 
-        // When the low HR alert is enabled (HR mode only), the label turns yellow
-        // and shows the configured threshold instead of the metric name.
-        var label_color = (!isHrv && alert_enabled) ? Graphics.COLOR_YELLOW : fg;
+        // Title: live RR BPM in HRV mode; threshold indicator when alert on in HR mode.
         var title_label;
         if (isHrv) {
             // Live RR-derived BPM only — dashes when this second had no RR stream.
@@ -230,7 +241,7 @@ class HrWidgetView extends Ui.View {
                 title_label = "HR ---";
             }
         } else if (alert_enabled) {
-            title_label = "< " + alert_threshold;
+            title_label = "> " + alert_threshold;
         } else {
             title_label = "HEART";
         }
@@ -239,11 +250,15 @@ class HrWidgetView extends Ui.View {
         if (isHrv) {
             short_label = liveRrBpm != null ? ("" + liveRrBpm) : "---";
         } else if (alert_enabled) {
-
-            short_label = "< " + alert_threshold;
+            short_label = "> " + alert_threshold;
         } else {
             short_label = "HR";
         }
+
+        // Big metric value turns yellow when high-HRV alert is enabled.
+        var value_color = alert_enabled ? Graphics.COLOR_YELLOW : fg;
+        var label_color = fg;
+
 
 
         // TODO this is maybe just a tiny bit too ad-hoc
@@ -251,9 +266,10 @@ class HrWidgetView extends Ui.View {
             // Fenix 3
             dc.setColor(label_color, Graphics.COLOR_TRANSPARENT);
             text(dc, 109, 15, Graphics.FONT_TINY, title_label);
-            dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
+            dc.setColor(value_color, Graphics.COLOR_TRANSPARENT);
             text(dc, 109, 45, Graphics.FONT_NUMBER_MEDIUM,
                  fmt_num(model.get_current()));
+            dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
             text(dc, 109, 192, Graphics.FONT_XTINY, duration_label);
             chart.draw(dc, [23, 75, 195, 172] as Array<Number>, fg, block_color,
                        range_min_size, true, true, false, self);
@@ -261,9 +277,10 @@ class HrWidgetView extends Ui.View {
             // Vivoactive, FR920xt, Epix
             dc.setColor(label_color, Graphics.COLOR_TRANSPARENT);
             text(dc, 70, 25, Graphics.FONT_MEDIUM, short_label);
-            dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
+            dc.setColor(value_color, Graphics.COLOR_TRANSPARENT);
             text(dc, 120, 25, Graphics.FONT_NUMBER_MEDIUM,
                  fmt_num(model.get_current()));
+            dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
             text(dc, 102, 135, Graphics.FONT_XTINY, duration_label);
             chart.draw(dc, [10, 45, 195, 120] as Array<Number>, fg, block_color,
                        range_min_size, true, true, false, self);
@@ -273,14 +290,16 @@ class HrWidgetView extends Ui.View {
             var h = dc.getHeight();
             dc.setColor(label_color, Graphics.COLOR_TRANSPARENT);
             text(dc, w / 2, h * 7 / 100, Graphics.FONT_TINY, title_label);
-            dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
+            dc.setColor(value_color, Graphics.COLOR_TRANSPARENT);
             text(dc, w / 2, h * 21 / 100, Graphics.FONT_NUMBER_MEDIUM,
                  fmt_num(model.get_current()));
+            dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
             text(dc, w / 2, h * 88 / 100, Graphics.FONT_XTINY, duration_label);
             chart.draw(dc, [w * 11 / 100, h * 34 / 100,
                             w * 89 / 100, h * 79 / 100] as Array<Number>,
                        fg, block_color, range_min_size, true, true, false, self);
         }
+
     }
 
     function drawDebug(dc as Dc) as Void {
@@ -376,7 +395,7 @@ class HrWidgetView extends Ui.View {
                          new Attention.VibeProfile(  0, 200),
                          new Attention.VibeProfile(100, 400)] as Array<Attention.VibeProfile>;
 
-    function fire_low_hr_alert() as Void {
+    function fire_hrv_alert() as Void {
         var settings = System.getDeviceSettings();
 
         // Play a tone if the device supports tones and the user has them on.
@@ -390,23 +409,38 @@ class HrWidgetView extends Ui.View {
         }
     }
 
-    function check_threshold(hr as Number or Null) as Void {
-        // Alert is based on HR even when the HRV chart is displayed.
-        if (!alert_enabled || hr == null) {
+    // High average-HRV alert: fire once when chart average crosses above threshold.
+    // Also enforces a 60-second cooldown between fires.
+    function check_hrv_threshold() as Void {
+        if (!alert_enabled) {
+            return;
+        }
+        if (hrvModel == null) {
             return;
         }
 
-        if (hr < alert_threshold) {
-            // Only fire once per time the HR crosses below the threshold.
-            if (!alert_active) {
-                alert_active = true;
-                fire_low_hr_alert();
-            }
+        var avg = hrvModel.get_avg();
+        if (avg == null) {
+            return;
         }
-        else {
+
+        if (avg.toFloat() > alert_threshold.toFloat()) {
+            // Only fire once per time average crosses above the threshold,
+            // and not again within the cooldown window.
+            if (!alert_active) {
+                var now = Time.now().value();
+                if (now - alert_last_fire >= 60) {
+                    alert_active = true;
+                    alert_last_fire = now;
+                    fire_hrv_alert();
+                }
+            }
+        } else {
             alert_active = false;
         }
     }
+
+
 
     function noteConnected() as Void {
         if (!have_connected) {
@@ -430,7 +464,6 @@ class HrWidgetView extends Ui.View {
                 lastHr = hr;
                 hrMissedSeconds = 0;
                 noteConnected();
-                check_threshold(hr);
             }
             return;
         }
@@ -445,7 +478,6 @@ class HrWidgetView extends Ui.View {
             lastHr = hr;
             hrMissedSeconds = 0;
             noteConnected();
-            check_threshold(hr);
             if (hrModel != null) {
                 hrModel.new_value(hr);
             }
@@ -456,18 +488,17 @@ class HrWidgetView extends Ui.View {
         hrMissedSeconds++;
         if (lastHr != null && hrMissedSeconds <= 5) {
             // Hold last good HR briefly (common when a 1 Hz RR bucket is empty).
-            check_threshold(lastHr);
             if (hrModel != null) {
                 hrModel.new_value(lastHr);
             }
         } else {
             // Prolonged dropout — record a gap.
-            check_threshold(null);
             if (hrModel != null) {
                 hrModel.new_value(null);
             }
         }
     }
+
 
     function hrFromIntervals(intervals as Array) as Number or Null {
         if (intervals == null || intervals.size() == 0) {
@@ -570,7 +601,10 @@ class HrWidgetView extends Ui.View {
             hrvModel.current = lastHrv;
         }
 
+        // Alert tracks chart average HRV (visible non-null points).
+        check_hrv_threshold();
     }
+
 }
 
 
@@ -632,30 +666,43 @@ class ThresholdMenuDelegate extends Ui.MenuInputDelegate {
     }
 
     function onMenuItem(item as Symbol) as Void {
-        if (item == :bpm_70) {
+        if (item == :hrv_20) {
+            view.set_alert_threshold(20);
+        }
+        else if (item == :hrv_25) {
+            view.set_alert_threshold(25);
+        }
+        else if (item == :hrv_30) {
+            view.set_alert_threshold(30);
+        }
+        else if (item == :hrv_35) {
+            view.set_alert_threshold(35);
+        }
+        else if (item == :hrv_40) {
+            view.set_alert_threshold(40);
+        }
+        else if (item == :hrv_45) {
+            view.set_alert_threshold(45);
+        }
+        else if (item == :hrv_50) {
+            view.set_alert_threshold(50);
+        }
+        else if (item == :hrv_55) {
+            view.set_alert_threshold(55);
+        }
+        else if (item == :hrv_60) {
+            view.set_alert_threshold(60);
+        }
+        else if (item == :hrv_65) {
+            view.set_alert_threshold(65);
+        }
+        else if (item == :hrv_70) {
             view.set_alert_threshold(70);
-        }
-        else if (item == :bpm_75) {
-            view.set_alert_threshold(75);
-        }
-        else if (item == :bpm_80) {
-            view.set_alert_threshold(80);
-        }
-        else if (item == :bpm_85) {
-            view.set_alert_threshold(85);
-        }
-        else if (item == :bpm_90) {
-            view.set_alert_threshold(90);
-        }
-        else if (item == :bpm_95) {
-            view.set_alert_threshold(95);
-        }
-        else if (item == :bpm_100) {
-            view.set_alert_threshold(100);
         }
         Ui.popView(Ui.SLIDE_RIGHT);
     }
 }
+
 
 class PeriodMenuDelegate extends Ui.MenuInputDelegate {
     function initialize() {

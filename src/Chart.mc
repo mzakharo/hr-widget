@@ -64,6 +64,20 @@ class Chart {
         }
 
 
+        // Average of non-null points currently on the graph.
+        var avg = model.get_avg();
+        if (avg != null) {
+            var avg_y = item_y(avg, y2, height, range_min, range_max);
+            dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
+            dc.drawLine(x1, avg_y, x2, avg_y);
+
+            // Label near the right edge, slightly above the line.
+            label_text(dc, x2 - 4, avg_y,
+                       x1y1x2y2, Graphics.COLOR_WHITE, Graphics.COLOR_BLACK,
+                       formatter.fmt_num(avg), true, true);
+        }
+
+
         if (draw_min_max and model.get_min_max_interesting()) {
             dc.setColor(line_color, Graphics.COLOR_TRANSPARENT);
             var bg_color = line_color == Graphics.COLOR_WHITE
@@ -79,6 +93,7 @@ class Chart {
         }
 
         if (draw_axes) {
+
             dc.setColor(line_color, Graphics.COLOR_TRANSPARENT);
             tick_line(dc, x1, y1, y2, -5, true);
             tick_line(dc, x2, y1, y2, 5, true);

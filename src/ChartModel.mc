@@ -15,6 +15,8 @@ class ChartModel {
     var max as Numeric or Null;
     var min_i as Number or Null;
     var max_i as Number or Null;
+    var avg as Numeric or Null;
+
 
     function initialize() {
         set_range_minutes(2.5);
@@ -67,6 +69,11 @@ class ChartModel {
     function get_min_max_interesting() as Boolean {
         return min != null and max != null and max != 0 and min != max;
     }
+
+    function get_avg() as Numeric or Null {
+        return avg;
+    }
+
 
 
     // Time-based rolling sample (HR). range_mult seconds per chart slot.
@@ -126,11 +133,14 @@ class ChartModel {
         max = null;
         min_i = 0;
         max_i = 0;
+        avg = null;
 
         if (values == null) {
             return;
         }
 
+        var sum = 0.0;
+        var count = 0;
         for (var i = 0; i < values.size(); i++) {
             var item = values[i];
             if (item != null) {
@@ -142,6 +152,8 @@ class ChartModel {
                     max_i = i;
                     max = item;
                 }
+                sum += item.toFloat();
+                count++;
             }
         }
 
@@ -150,6 +162,11 @@ class ChartModel {
             min = 0;
             max = 0;
         }
+
+        if (count > 0) {
+            avg = sum / count;
+        }
     }
+
 
 }

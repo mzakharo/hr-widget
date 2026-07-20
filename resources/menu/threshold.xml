@@ -1,9 +1,13 @@
 <menu id="ThresholdMenu" title="Alert Threshold">
-  <menu-item id="bpm_70" label="70 bpm" />
-  <menu-item id="bpm_75" label="75 bpm" />
-  <menu-item id="bpm_80" label="80 bpm" />
-  <menu-item id="bpm_85" label="85 bpm" />
-  <menu-item id="bpm_90" label="90 bpm" />
-  <menu-item id="bpm_95" label="95 bpm" />
-  <menu-item id="bpm_100" label="100 bpm" />
+  <menu-item id="hrv_20" label="20" />
+  <menu-item id="hrv_25" label="25" />
+  <menu-item id="hrv_30" label="30" />
+  <menu-item id="hrv_35" label="35" />
+  <menu-item id="hrv_40" label="40" />
+  <menu-item id="hrv_45" label="45" />
+  <menu-item id="hrv_50" label="50" />
+  <menu-item id="hrv_55" label="55" />
+  <menu-item id="hrv_60" label="60" />
+  <menu-item id="hrv_65" label="65" />
+  <menu-item id="hrv_70" label="70" />
 </menu>
