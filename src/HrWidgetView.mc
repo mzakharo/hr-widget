@@ -560,15 +560,16 @@ class HrWidgetView extends Ui.View {
             lastHrv = rounded;
             hrvModel.new_value(rounded);
         } else if (hrvWindow.getSecondsCount() >= hrvWindow.getWindowSeconds()) {
-            // Window full but not enough NN — plot a gap, keep last readout.
+            // Signal drop / not enough NN — chart gap; hold last big readout.
             hrvModel.new_value(null);
             if (lastHrv != null) {
                 hrvModel.current = lastHrv;
             }
         } else {
-            // Warmup — no chart advance of a value yet; hold readout blank.
+            // Warmup — do not advance chart; hold last readout if any.
             hrvModel.current = lastHrv;
         }
+
     }
 }
 

@@ -94,9 +94,18 @@ class HrvRmssdWindow {
     }
 
     // Feed one second of beat-to-beat intervals (ms).
-    // Returns window RMSSD once full and enough NN remain, else null.
+    // Returns window RMSSD only when:
+    //   - this second delivered at least one accepted NN (live signal), and
+    //   - the rolling window is full with enough NN samples.
+    // Empty / dropout seconds age the window but do NOT republish stale RMSSD.
     function addOneSecBeatToBeatIntervals(beatToBeatIntervals as Array) as Float or Null {
         mSecondsCount++;
+        var acceptedThisSec = 0;
+
+        // No fresh RR this second — clear live raw marker.
+        if (beatToBeatIntervals == null || beatToBeatIntervals.size() == 0) {
+            mLastRawRr = null;
+        }
 
         if (beatToBeatIntervals != null) {
             for (var i = 0; i < beatToBeatIntervals.size(); i++) {
@@ -131,6 +140,7 @@ class HrvRmssdWindow {
                 mSecondMarks.add(mSecondsCount);
                 mLastAccepted = rr;
                 mAcceptedBeats++;
+                acceptedThisSec++;
             }
         }
 
@@ -145,14 +155,22 @@ class HrvRmssdWindow {
             mSecondMarks = mSecondMarks.slice(start, null) as Array<Number>;
         }
 
+        // No live accepted beat this second → do not publish (signal drop / all rejected).
+        if (acceptedThisSec < 1) {
+            mLastRmssd = null;
+            return null;
+        }
+
         // Window not full yet, or not enough NN samples.
         if (mSecondsCount < mWindowSeconds || mIntervals.size() < HRV_MIN_BEATS) {
+            mLastRmssd = null;
             return null;
         }
 
         mLastRmssd = calculate();
         return mLastRmssd;
     }
+
 
     private function calculate() as Float or Null {
         if (mIntervals.size() < 2) {
