@@ -31,6 +31,8 @@ class HrWidgetView extends Ui.View {
     var hrMissedSeconds as Number = 0;
     // Last good RMSSD for the big readout.
     var lastHrv as Float or Null = null;
+    // Quality associated with the latest published RMSSD (0.0 through 1.0).
+    var lastHrvQuality as Float or Null = null;
     // Fresh RR-derived BPM for the HRV title (null when this second had no RR).
     var liveRrBpm as Number or Null = null;
 
@@ -255,8 +257,11 @@ class HrWidgetView extends Ui.View {
             short_label = "HR";
         }
 
-        // Big metric value turns yellow when high-HRV alert is enabled.
-        var value_color = alert_enabled ? Graphics.COLOR_YELLOW : fg;
+        // HRV uses a red→yellow→green signal-quality gradient. HR retains the
+        // existing yellow alert indication.
+        var value_color = isHrv
+            ? qualityColor(lastHrvQuality, fg)
+            : (alert_enabled ? Graphics.COLOR_YELLOW : fg);
         var label_color = fg;
 
 
@@ -333,6 +338,7 @@ class HrWidgetView extends Ui.View {
             var acc = hrvWindow.getAcceptedCount();
             var need = hrvWindow.getMinBeatsRequired();
             var rmssd = hrvWindow.getLastRmssd();
+            var quality = hrvWindow.getLastQuality();
             var lastAcc = hrvWindow.getLastAccepted();
             var lastRaw = hrvWindow.getLastRawRr();
 
@@ -346,6 +352,9 @@ class HrWidgetView extends Ui.View {
             lines.add("rmssd:" + (rmssd != null
                       ? (Math.round(rmssd * 10.0) / 10.0).format("%.1f")
                       : "null"));
+            lines.add("quality:" + (quality != null
+                      ? Math.round(quality * 100.0).toNumber() + "%"
+                      : "-"));
         } else {
             lines.add("hrvWindow: null");
         }
@@ -373,6 +382,31 @@ class HrWidgetView extends Ui.View {
             return rounded.format("%.1f");
         }
         return "" + (num as Number).toNumber();
+    }
+
+    function qualityColor(quality as Float or Null, fallback as ColorType) as ColorType {
+        if (quality == null) {
+            return fallback;
+        }
+        var q = quality as Float;
+        if (q < 0.0) {
+            q = 0.0;
+        } else if (q > 1.0) {
+            q = 1.0;
+        }
+
+        // 0.0 = red, 0.5 = yellow, 1.0 = green.
+        var red;
+        var green;
+        if (q < 0.5) {
+            red = 255;
+            green = Math.round(q * 2.0 * 255.0).toNumber();
+        } else {
+            red = Math.round((1.0 - q) * 2.0 * 255.0).toNumber();
+            green = 255;
+        }
+        // Connect IQ colors are packed 0xRRGGBB values.
+        return (red * 65536 + green * 256) as ColorType;
     }
 
     function text(dc as Dc, x as Number, y as Number,
@@ -584,10 +618,13 @@ class HrWidgetView extends Ui.View {
             liveRrBpm = null;
         }
 
-        var rmssd = hrvWindow.addOneSecBeatToBeatIntervals(intervals);
+        var measurement = hrvWindow.addOneSecBeatToBeatIntervals(intervals);
+        // Color reflects current-window quality even when the last numeric HRV
+        // is being held because the present window does not qualify.
+        lastHrvQuality = hrvWindow.getLastQuality();
 
-        if (rmssd != null) {
-            var rounded = Math.round(rmssd * 10.0) / 10.0;
+        if (measurement != null) {
+            var rounded = Math.round(measurement.rmssd * 10.0) / 10.0;
             lastHrv = rounded;
             hrvModel.new_value(rounded);
         } else if (hrvWindow.getSecondsCount() >= hrvWindow.getWindowSeconds()) {

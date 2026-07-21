@@ -33,8 +33,22 @@ const RR_REACQUIRE_FRACTION = 0.125;
 // Fixed rolling window length (seconds).
 const HRV_WINDOW_SECONDS = 60;
 
-// Minimum accepted NN intervals before publishing RMSSD.
-const HRV_MIN_BEATS = 60;
+// Quality-based publication requirements for the rolling window.
+const HRV_MIN_VALID_PAIRS = 35;
+const HRV_MIN_USABLE_FRACTION = 0.80;
+const HRV_MAX_ARTIFACT_FRACTION = 0.20;
+const HRV_MAX_DROPOUT_SECONDS = 5;
+
+class HrvMeasurement {
+    var rmssd as Float;
+    // Normalized signal quality, 0.0 (poor) through 1.0 (excellent).
+    var quality as Float;
+
+    function initialize(value as Float, score as Float) {
+        rmssd = value;
+        quality = score;
+    }
+}
 
 class HrvRmssdWindow {
     private var mWindowSeconds as Number = HRV_WINDOW_SECONDS;
@@ -52,6 +66,11 @@ class HrvRmssdWindow {
     private var mRecentAccepted as Array<Float> = [] as Array<Float>;
     // Range-valid outliers used to detect a sustained shift to a new rate.
     private var mReacquireCandidates as Array<Float> = [] as Array<Float>;
+    // Per-second quality statistics, retained for the same 60-second window.
+    private var mRawPerSecond as Array<Number> = [] as Array<Number>;
+    private var mAcceptedPerSecond as Array<Number> = [] as Array<Number>;
+    private var mRejectedPerSecond as Array<Number> = [] as Array<Number>;
+    private var mLastQuality as Float or Null = null;
 
     // Debug counters (lifetime of this window instance).
     private var mRawBeats as Number = 0;
@@ -66,6 +85,10 @@ class HrvRmssdWindow {
 
     function getLastRmssd() as Float or Null {
         return mLastRmssd;
+    }
+
+    function getLastQuality() as Float or Null {
+        return mLastQuality;
     }
 
     function getWindowSeconds() as Number {
@@ -105,7 +128,7 @@ class HrvRmssdWindow {
     }
 
     function getMinBeatsRequired() as Number {
-        return HRV_MIN_BEATS;
+        return HRV_MIN_VALID_PAIRS;
     }
 
     // Feed one second of beat-to-beat intervals (ms).
@@ -113,9 +136,11 @@ class HrvRmssdWindow {
     //   - this second delivered at least one accepted NN (live signal), and
     //   - the rolling window is full with enough NN samples.
     // Empty / dropout seconds age the window but do NOT republish stale RMSSD.
-    function addOneSecBeatToBeatIntervals(beatToBeatIntervals as Array) as Float or Null {
+    function addOneSecBeatToBeatIntervals(beatToBeatIntervals as Array) as HrvMeasurement or Null {
         mSecondsCount++;
         var acceptedThisSec = 0;
+        var rawAtStart = mRawBeats;
+        var rejectedAtStart = mRejectRange + mRejectJump;
 
         // No fresh RR this second — clear live raw marker.
         if (beatToBeatIntervals == null || beatToBeatIntervals.size() == 0) {
@@ -168,6 +193,11 @@ class HrvRmssdWindow {
             }
         }
 
+        mRawPerSecond.add(mRawBeats - rawAtStart);
+        mAcceptedPerSecond.add(acceptedThisSec);
+        mRejectedPerSecond.add((mRejectRange + mRejectJump) - rejectedAtStart);
+        trimQualityWindow();
+
         // Drop data older than the rolling window.
         var cutoff = mSecondsCount - mWindowSeconds;
         var start = 0;
@@ -187,17 +217,106 @@ class HrvRmssdWindow {
         // No live accepted beat this second → do not publish (signal drop / all rejected).
         if (acceptedThisSec < 1) {
             mLastRmssd = null;
+            mLastQuality = calculateQuality();
             return null;
         }
 
-        // Window not full yet, or not enough NN samples.
-        if (mSecondsCount < mWindowSeconds || mIntervals.size() < HRV_MIN_BEATS) {
+        // Require a complete time window and quality-qualified NN data.
+        var validPairs = getValidPairCount();
+        var usableFraction = getUsableFraction();
+        var artifactFraction = getArtifactFraction();
+        var maxDropout = getMaxConsecutiveDropoutSeconds();
+        mLastQuality = calculateQuality();
+        if (mSecondsCount < mWindowSeconds
+            || validPairs < HRV_MIN_VALID_PAIRS
+            || usableFraction < HRV_MIN_USABLE_FRACTION
+            || artifactFraction > HRV_MAX_ARTIFACT_FRACTION
+            || maxDropout > HRV_MAX_DROPOUT_SECONDS) {
             mLastRmssd = null;
             return null;
         }
 
         mLastRmssd = calculate();
-        return mLastRmssd;
+        if (mLastRmssd == null || mLastQuality == null) {
+            return null;
+        }
+        return new HrvMeasurement(mLastRmssd as Float, mLastQuality as Float);
+    }
+
+    private function trimQualityWindow() as Void {
+        if (mRawPerSecond.size() > mWindowSeconds) {
+            mRawPerSecond = mRawPerSecond.slice(1, null) as Array<Number>;
+            mAcceptedPerSecond = mAcceptedPerSecond.slice(1, null) as Array<Number>;
+            mRejectedPerSecond = mRejectedPerSecond.slice(1, null) as Array<Number>;
+        }
+    }
+
+    private function getValidPairCount() as Number {
+        var count = 0;
+        for (var i = 1; i < mHasValidPredecessor.size(); i++) {
+            if (mHasValidPredecessor[i]) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private function getUsableFraction() as Float {
+        var raw = 0;
+        var accepted = 0;
+        for (var i = 0; i < mRawPerSecond.size(); i++) {
+            raw += mRawPerSecond[i];
+            accepted += mAcceptedPerSecond[i];
+        }
+        return raw > 0 ? accepted.toFloat() / raw.toFloat() : 0.0;
+    }
+
+    private function getArtifactFraction() as Float {
+        var raw = 0;
+        var rejected = 0;
+        for (var i = 0; i < mRawPerSecond.size(); i++) {
+            raw += mRawPerSecond[i];
+            rejected += mRejectedPerSecond[i];
+        }
+        return raw > 0 ? rejected.toFloat() / raw.toFloat() : 1.0;
+    }
+
+    private function getMaxConsecutiveDropoutSeconds() as Number {
+        var longest = 0;
+        var current = 0;
+        for (var i = 0; i < mAcceptedPerSecond.size(); i++) {
+            if (mAcceptedPerSecond[i] == 0) {
+                current++;
+                if (current > longest) {
+                    longest = current;
+                }
+            } else {
+                current = 0;
+            }
+        }
+        return longest;
+    }
+
+    private function calculateQuality() as Float {
+        if (mSecondsCount < mWindowSeconds) {
+            return 0.0;
+        }
+        var usable = getUsableFraction();
+        var pairScore = getValidPairCount().toFloat() / 50.0;
+        if (pairScore > 1.0) {
+            pairScore = 1.0;
+        }
+        var dropoutScore = 1.0 - getMaxConsecutiveDropoutSeconds().toFloat()
+                           / HRV_MAX_DROPOUT_SECONDS.toFloat();
+        if (dropoutScore < 0.0) {
+            dropoutScore = 0.0;
+        }
+        // Usability dominates; pair density and continuity refine the score.
+        var score = usable * 0.5 + pairScore * 0.3 + dropoutScore * 0.2;
+        if (score > 1.0) {
+            score = 1.0;
+        }
+        return score;
     }
 
     private function isLocalArtifact(rr as Float) as Boolean {
@@ -316,8 +435,12 @@ class HrvRmssdWindow {
         mSequenceBroken = true;
         mLastAccepted = null;
         mLastRmssd = null;
+        mLastQuality = null;
         mRecentAccepted = [] as Array<Float>;
         mReacquireCandidates = [] as Array<Float>;
+        mRawPerSecond = [] as Array<Number>;
+        mAcceptedPerSecond = [] as Array<Number>;
+        mRejectedPerSecond = [] as Array<Number>;
         mRawBeats = 0;
         mAcceptedBeats = 0;
         mRejectRange = 0;
