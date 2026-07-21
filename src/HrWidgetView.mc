@@ -16,7 +16,7 @@ class HrWidgetView extends Ui.View {
     var chart as Chart or Null;
     var have_connected as Boolean = false;
     var alert_enabled as Boolean = false;
-    var alert_threshold as Number = 40;
+    var alert_threshold as Float = 4.0;
     var alert_active as Boolean = false;
     // Epoch seconds of last alert fire; used for 60s cooldown.
     var alert_last_fire as Number = 0;
@@ -29,10 +29,12 @@ class HrWidgetView extends Ui.View {
     // Last good HR (bpm). Beat-interval seconds are often empty; hold instead of null gaps.
     var lastHr as Number or Null = null;
     var hrMissedSeconds as Number = 0;
-    // Last good RMSSD for the big readout.
+    // Last good lnRMSSD for the big readout.
     var lastHrv as Float or Null = null;
     // Quality associated with the latest published RMSSD (0.0 through 1.0).
     var lastHrvQuality as Float or Null = null;
+    // Latest live, quality-qualified lnRMSSD used by the alert.
+    var latestQualifiedLnRmssd as Float or Null = null;
     // Fresh RR-derived BPM for the HRV title (null when this second had no RR).
     var liveRrBpm as Number or Null = null;
 
@@ -81,9 +83,9 @@ class HrWidgetView extends Ui.View {
         debugMode = !debugMode;
     }
 
-    function set_alert_threshold(value as Number) as Void {
+    function set_alert_threshold(value as Float) as Void {
         alert_threshold = value;
-        // Re-evaluate immediately against current chart average.
+        // Re-evaluate against the latest live quality-qualified value.
         check_hrv_threshold();
     }
 
@@ -109,7 +111,8 @@ class HrWidgetView extends Ui.View {
             hrModel.read_data();
 
             // HRV is a continuous time-series chart (same X as HR).
-            hrvModel = new PersistentChartModel("hrv_");
+            // Raw RMSSD chart key; avoids mixing prior lnRMSSD chart history.
+            hrvModel = new PersistentChartModel("hrv_rmssd_v2_");
             hrvModel.read_data();
 
             // Keep both models on the same time range.
@@ -124,16 +127,19 @@ class HrWidgetView extends Ui.View {
             }
             var saved_threshold = Storage.getValue(ALERT_THRESHOLD);
             if (saved_threshold != null) {
-                alert_threshold = saved_threshold as Number;
+                var storedThreshold = (saved_threshold as Numeric).toFloat();
+                // Migrate old RMSSD-ms thresholds to the new safe default.
+                alert_threshold = storedThreshold > 10.0 ? 4.0 : storedThreshold;
             }
             var saved_mode = Storage.getValue(PLOT_MODE);
             if (saved_mode != null) {
                 plot_mode = saved_mode as Number;
             }
 
-            lastHrv = findLastNonNull(hrvModel);
+            // Raw chart history cannot restore the latest lnRMSSD readout.
+            lastHrv = null;
             hrModel.current = null;
-            hrvModel.current = lastHrv;
+            hrvModel.current = findLastNonNull(hrvModel);
 
             if (plot_mode == MODE_HRV) {
                 model = hrvModel;
@@ -273,7 +279,7 @@ class HrWidgetView extends Ui.View {
             text(dc, 109, 15, Graphics.FONT_TINY, title_label);
             dc.setColor(value_color, Graphics.COLOR_TRANSPARENT);
             text(dc, 109, 45, Graphics.FONT_NUMBER_MEDIUM,
-                 fmt_num(model.get_current()));
+                 fmt_num(isHrv ? lastHrv : model.get_current()));
             dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
             text(dc, 109, 192, Graphics.FONT_XTINY, duration_label);
             chart.draw(dc, [23, 75, 195, 172] as Array<Number>, fg, block_color,
@@ -284,7 +290,7 @@ class HrWidgetView extends Ui.View {
             text(dc, 70, 25, Graphics.FONT_MEDIUM, short_label);
             dc.setColor(value_color, Graphics.COLOR_TRANSPARENT);
             text(dc, 120, 25, Graphics.FONT_NUMBER_MEDIUM,
-                 fmt_num(model.get_current()));
+                 fmt_num(isHrv ? lastHrv : model.get_current()));
             dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
             text(dc, 102, 135, Graphics.FONT_XTINY, duration_label);
             chart.draw(dc, [10, 45, 195, 120] as Array<Number>, fg, block_color,
@@ -297,7 +303,7 @@ class HrWidgetView extends Ui.View {
             text(dc, w / 2, h * 7 / 100, Graphics.FONT_TINY, title_label);
             dc.setColor(value_color, Graphics.COLOR_TRANSPARENT);
             text(dc, w / 2, h * 21 / 100, Graphics.FONT_NUMBER_MEDIUM,
-                 fmt_num(model.get_current()));
+                 fmt_num(isHrv ? lastHrv : model.get_current()));
             dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
             text(dc, w / 2, h * 88 / 100, Graphics.FONT_XTINY, duration_label);
             chart.draw(dc, [w * 11 / 100, h * 34 / 100,
@@ -376,12 +382,23 @@ class HrWidgetView extends Ui.View {
         if (num == null) {
             return "---";
         }
-        // Show whole numbers for HR; one decimal for HRV RMSSD.
+        // Show whole numbers for HR; two decimals for lnRMSSD.
         if (plot_mode == MODE_HRV) {
-            var rounded = Math.round((num as Float) * 10.0) / 10.0;
-            return rounded.format("%.1f");
+            var rounded = Math.round((num as Float) * 100.0) / 100.0;
+            return rounded.format("%.2f");
         }
         return "" + (num as Number).toNumber();
+    }
+
+    function fmt_chart_num(num as Numeric or Null) as String {
+        if (num == null) {
+            return "---";
+        }
+        if (plot_mode == MODE_HRV) {
+            var rounded = Math.round((num as Numeric).toFloat() * 10.0) / 10.0;
+            return rounded.format("%.1f");
+        }
+        return "" + (num as Numeric).toNumber();
     }
 
     function qualityColor(quality as Float or Null, fallback as ColorType) as ColorType {
@@ -443,22 +460,18 @@ class HrWidgetView extends Ui.View {
         }
     }
 
-    // High average-HRV alert: fire once when chart average crosses above threshold.
+    // High lnRMSSD alert: fire once when the latest quality-qualified value
+    // crosses above the threshold.
     // Also enforces a 60-second cooldown between fires.
     function check_hrv_threshold() as Void {
         if (!alert_enabled) {
             return;
         }
-        if (hrvModel == null) {
+        if (latestQualifiedLnRmssd == null) {
             return;
         }
 
-        var avg = hrvModel.get_avg();
-        if (avg == null) {
-            return;
-        }
-
-        if (avg.toFloat() > alert_threshold.toFloat()) {
+        if ((latestQualifiedLnRmssd as Float) > alert_threshold) {
             // Only fire once per time average crosses above the threshold,
             // and not again within the cooldown window.
             if (!alert_active) {
@@ -597,9 +610,7 @@ class HrWidgetView extends Ui.View {
         Ui.requestUpdate();
     }
 
-    // Continuous 60s rolling-window HRV (time-series chart, same X as HR).
-    // Every second advances the window. RMSSD is published only after the
-    // window is full and ≥60 accepted NN samples are present.
+    // Continuous quality-qualified 60s rolling lnRMSSD time series.
     function updateHrv(intervals as Array) as Void {
         if (hrvModel == null || hrvWindow == null) {
             return;
@@ -624,21 +635,22 @@ class HrWidgetView extends Ui.View {
         lastHrvQuality = hrvWindow.getLastQuality();
 
         if (measurement != null) {
-            var rounded = Math.round(measurement.rmssd * 10.0) / 10.0;
+            // Connect IQ Math.log requires an explicit base.
+            var lnRmssd = Math.log(measurement.rmssd, 2.718281828459045).toFloat();
+            var rounded = Math.round(lnRmssd * 100.0) / 100.0;
             lastHrv = rounded;
-            hrvModel.new_value(rounded);
+            latestQualifiedLnRmssd = rounded;
+            // The graph remains in directly interpretable RMSSD milliseconds.
+            var rawRmssd = Math.round(measurement.rmssd * 10.0) / 10.0;
+            hrvModel.new_value(rawRmssd);
         } else if (hrvWindow.getSecondsCount() >= hrvWindow.getWindowSeconds()) {
-            // Signal drop / not enough NN — chart gap; hold last big readout.
+            // Signal drop / low quality — chart gap; hold lnRMSSD readout.
             hrvModel.new_value(null);
-            if (lastHrv != null) {
-                hrvModel.current = lastHrv;
-            }
         } else {
-            // Warmup — do not advance chart; hold last readout if any.
-            hrvModel.current = lastHrv;
+            // Warmup — do not advance the raw RMSSD chart.
         }
 
-        // Alert tracks chart average HRV (visible non-null points).
+        // Alert tracks only the latest live, quality-qualified lnRMSSD.
         check_hrv_threshold();
     }
 
@@ -704,37 +716,31 @@ class ThresholdMenuDelegate extends Ui.MenuInputDelegate {
 
     function onMenuItem(item as Symbol) as Void {
         if (item == :hrv_20) {
-            view.set_alert_threshold(20);
+            view.set_alert_threshold(2.0);
         }
         else if (item == :hrv_25) {
-            view.set_alert_threshold(25);
+            view.set_alert_threshold(2.5);
         }
         else if (item == :hrv_30) {
-            view.set_alert_threshold(30);
+            view.set_alert_threshold(3.0);
         }
         else if (item == :hrv_35) {
-            view.set_alert_threshold(35);
+            view.set_alert_threshold(3.5);
         }
         else if (item == :hrv_40) {
-            view.set_alert_threshold(40);
+            view.set_alert_threshold(4.0);
         }
         else if (item == :hrv_45) {
-            view.set_alert_threshold(45);
+            view.set_alert_threshold(4.5);
         }
         else if (item == :hrv_50) {
-            view.set_alert_threshold(50);
+            view.set_alert_threshold(5.0);
         }
         else if (item == :hrv_55) {
-            view.set_alert_threshold(55);
+            view.set_alert_threshold(5.5);
         }
         else if (item == :hrv_60) {
-            view.set_alert_threshold(60);
-        }
-        else if (item == :hrv_65) {
-            view.set_alert_threshold(65);
-        }
-        else if (item == :hrv_70) {
-            view.set_alert_threshold(70);
+            view.set_alert_threshold(6.0);
         }
         Ui.popView(Ui.SLIDE_RIGHT);
     }

@@ -74,7 +74,7 @@ class Chart {
             // Label near the right edge, slightly above the line.
             label_text(dc, x2 - 4, avg_y,
                        x1y1x2y2, Graphics.COLOR_WHITE, Graphics.COLOR_BLACK,
-                       formatter.fmt_num(avg), true, true);
+                       formatter.method(:fmt_chart_num).invoke(avg), true, true);
         }
 
 
@@ -84,11 +84,13 @@ class Chart {
                 ? Graphics.COLOR_BLACK : Graphics.COLOR_WHITE;
             label_text(dc, item_x(model.get_min_i(), x1, width, data.size()),
                        item_y(min, y2, height, range_min, range_max),
-                       x1y1x2y2, line_color, bg_color, formatter.fmt_num(min),
+                       x1y1x2y2, line_color, bg_color,
+                       formatter.method(:fmt_chart_num).invoke(min),
                        strict_min_max_bounding, false);
             label_text(dc, item_x(model.get_max_i(), x1, width, data.size()),
                        item_y(max, y2, height, range_min, range_max),
-                       x1y1x2y2, line_color, bg_color, formatter.fmt_num(max),
+                       x1y1x2y2, line_color, bg_color,
+                       formatter.method(:fmt_chart_num).invoke(max),
                        strict_min_max_bounding, true);
         }
 

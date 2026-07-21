@@ -6,7 +6,7 @@ using Toybox.Application as App;
 using Toybox.Application.Storage;
 
 // Connect IQ Storage cannot store null. Encode chart gaps as this sentinel
-// (invalid for both HR bpm and RMSSD ms) and convert back on read.
+// (invalid for HR bpm, RMSSD ms, and lnRMSSD) and convert back on read.
 const STORAGE_NULL_SENTINEL = -1;
 
 class PersistentChartModel extends ChartModel {
