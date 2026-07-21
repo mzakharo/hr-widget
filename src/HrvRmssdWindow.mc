@@ -53,9 +53,11 @@ class HrvMeasurement {
 class HrvRmssdWindow {
     private var mWindowSeconds as Number = HRV_WINDOW_SECONDS;
     private var mSecondsCount as Number = 0;
-    // Accepted NN intervals and the second they arrived.
+    // Accepted NN intervals and reconstructed beat endpoint times (milliseconds
+    // on this window's elapsed timeline).
     private var mIntervals as Array<Float> = [] as Array<Float>;
-    private var mSecondMarks as Array<Number> = [] as Array<Number>;
+    private var mBeatMarksMs as Array<Float> = [] as Array<Float>;
+    private var mLastRawBeatTimeMs as Float or Null = null;
     // Whether each interval is truly successive to the accepted interval before it.
     // Index 0 is always false; arrays remain aligned when the window is sliced.
     private var mHasValidPredecessor as Array<Boolean> = [] as Array<Boolean>;
@@ -71,6 +73,7 @@ class HrvRmssdWindow {
     private var mAcceptedPerSecond as Array<Number> = [] as Array<Number>;
     private var mRejectedPerSecond as Array<Number> = [] as Array<Number>;
     private var mLastQuality as Float or Null = null;
+    private var mConsecutiveEmptySeconds as Number = 0;
 
     // Debug counters (lifetime of this window instance).
     private var mRawBeats as Number = 0;
@@ -137,6 +140,24 @@ class HrvRmssdWindow {
     //   - the rolling window is full with enough NN samples.
     // Empty / dropout seconds age the window but do NOT republish stale RMSSD.
     function addOneSecBeatToBeatIntervals(beatToBeatIntervals as Array) as HrvMeasurement or Null {
+        var hasRawRr = false;
+        if (beatToBeatIntervals != null) {
+            for (var h = 0; h < beatToBeatIntervals.size(); h++) {
+                if (beatToBeatIntervals[h] != null
+                    && beatToBeatIntervals[h].toFloat() > 0.0) {
+                    hasRawRr = true;
+                    break;
+                }
+            }
+        }
+
+        // A dropout longer than the permitted quality gap invalidates the old
+        // measurement session. When RR resumes, start a clean warmup rather
+        // than carrying the stale gap and baseline through the rolling window.
+        if (hasRawRr && mConsecutiveEmptySeconds > HRV_MAX_DROPOUT_SECONDS) {
+            reset();
+        }
+
         mSecondsCount++;
         var acceptedThisSec = 0;
         var rawAtStart = mRawBeats;
@@ -149,7 +170,25 @@ class HrvRmssdWindow {
             mReacquireCandidates = [] as Array<Float>;
         }
 
+        if (hasRawRr) {
+            mConsecutiveEmptySeconds = 0;
+        } else {
+            mConsecutiveEmptySeconds++;
+        }
+
         if (beatToBeatIntervals != null) {
+            // Garmin delivers RR intervals in one-second callback buckets. Work
+            // backwards from the callback boundary so each beat gets its own
+            // estimated endpoint instead of sharing one coarse second marker.
+            var bucketTotalMs = 0.0;
+            for (var t = 0; t < beatToBeatIntervals.size(); t++) {
+                var timedInterval = beatToBeatIntervals[t];
+                if (timedInterval != null && timedInterval.toFloat() > 0.0) {
+                    bucketTotalMs += timedInterval.toFloat();
+                }
+            }
+            var beatTimeMs = mSecondsCount.toFloat() * 1000.0 - bucketTotalMs;
+
             for (var i = 0; i < beatToBeatIntervals.size(); i++) {
                 var interval = beatToBeatIntervals[i];
                 if (interval == null) {
@@ -158,6 +197,16 @@ class HrvRmssdWindow {
                     continue;
                 }
                 var rr = interval.toFloat();
+                if (rr > 0.0) {
+                    beatTimeMs += rr;
+                    // Preserve chronological ordering if callback buckets
+                    // overlap slightly because of delivery jitter.
+                    if (mLastRawBeatTimeMs != null
+                        && beatTimeMs <= (mLastRawBeatTimeMs as Float)) {
+                        beatTimeMs = (mLastRawBeatTimeMs as Float) + 1.0;
+                    }
+                    mLastRawBeatTimeMs = beatTimeMs;
+                }
                 mRawBeats++;
                 mLastRawRr = rr;
 
@@ -183,7 +232,7 @@ class HrvRmssdWindow {
 
                 var hasValidPredecessor = mLastAccepted != null && !mSequenceBroken;
                 mIntervals.add(rr);
-                mSecondMarks.add(mSecondsCount);
+                mBeatMarksMs.add(beatTimeMs);
                 mHasValidPredecessor.add(hasValidPredecessor);
                 mLastAccepted = rr;
                 mSequenceBroken = false;
@@ -198,15 +247,17 @@ class HrvRmssdWindow {
         mRejectedPerSecond.add((mRejectRange + mRejectJump) - rejectedAtStart);
         trimQualityWindow();
 
-        // Drop data older than the rolling window.
-        var cutoff = mSecondsCount - mWindowSeconds;
+        // Drop beats whose reconstructed endpoint is outside the exact rolling
+        // duration, rather than evicting an entire callback bucket at once.
+        var cutoffMs = mSecondsCount.toFloat() * 1000.0
+                     - mWindowSeconds.toFloat() * 1000.0;
         var start = 0;
-        while (start < mSecondMarks.size() && mSecondMarks[start] <= cutoff) {
+        while (start < mBeatMarksMs.size() && mBeatMarksMs[start] <= cutoffMs) {
             start++;
         }
         if (start > 0) {
             mIntervals = mIntervals.slice(start, null) as Array<Float>;
-            mSecondMarks = mSecondMarks.slice(start, null) as Array<Number>;
+            mBeatMarksMs = mBeatMarksMs.slice(start, null) as Array<Float>;
             mHasValidPredecessor = mHasValidPredecessor.slice(start, null) as Array<Boolean>;
             // The first retained interval has no retained predecessor.
             if (mHasValidPredecessor.size() > 0) {
@@ -430,7 +481,8 @@ class HrvRmssdWindow {
     function reset() as Void {
         mSecondsCount = 0;
         mIntervals = [] as Array<Float>;
-        mSecondMarks = [] as Array<Number>;
+        mBeatMarksMs = [] as Array<Float>;
+        mLastRawBeatTimeMs = null;
         mHasValidPredecessor = [] as Array<Boolean>;
         mSequenceBroken = true;
         mLastAccepted = null;
@@ -441,6 +493,7 @@ class HrvRmssdWindow {
         mRawPerSecond = [] as Array<Number>;
         mAcceptedPerSecond = [] as Array<Number>;
         mRejectedPerSecond = [] as Array<Number>;
+        mConsecutiveEmptySeconds = 0;
         mRawBeats = 0;
         mAcceptedBeats = 0;
         mRejectRange = 0;
