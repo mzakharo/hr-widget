@@ -10,7 +10,8 @@
 //   2) Successive-change: drop RR that jumps more than 25% from the last
 //      accepted RR (ECG-style; rejects motion/ectopic spikes more aggressively).
 //   3) Publish once the time window is full and we have enough accepted
-//      NN samples. Rejected beats are simply omitted from the NN series.
+//      NN samples. Rejected/missing beats break the successive NN sequence,
+//      so RMSSD never joins two accepted intervals across an artifact or gap.
 
 import Toybox.Lang;
 import Toybox.Math;
@@ -35,6 +36,10 @@ class HrvRmssdWindow {
     // Accepted NN intervals and the second they arrived.
     private var mIntervals as Array<Float> = [] as Array<Float>;
     private var mSecondMarks as Array<Number> = [] as Array<Number>;
+    // Whether each interval is truly successive to the accepted interval before it.
+    // Index 0 is always false; arrays remain aligned when the window is sliced.
+    private var mHasValidPredecessor as Array<Boolean> = [] as Array<Boolean>;
+    private var mSequenceBroken as Boolean = true;
     private var mLastAccepted as Float or Null = null;
     private var mLastRmssd as Float or Null = null;
 
@@ -105,12 +110,14 @@ class HrvRmssdWindow {
         // No fresh RR this second — clear live raw marker.
         if (beatToBeatIntervals == null || beatToBeatIntervals.size() == 0) {
             mLastRawRr = null;
+            mSequenceBroken = true;
         }
 
         if (beatToBeatIntervals != null) {
             for (var i = 0; i < beatToBeatIntervals.size(); i++) {
                 var interval = beatToBeatIntervals[i];
                 if (interval == null) {
+                    mSequenceBroken = true;
                     continue;
                 }
                 var rr = interval.toFloat();
@@ -120,6 +127,7 @@ class HrvRmssdWindow {
                 // 1) Physiological range.
                 if (rr < RR_MIN_MS || rr > RR_MAX_MS) {
                     mRejectRange++;
+                    mSequenceBroken = true;
                     continue;
                 }
 
@@ -132,13 +140,17 @@ class HrvRmssdWindow {
                     }
                     if (delta > prev * RR_MAX_CHANGE) {
                         mRejectJump++;
+                        mSequenceBroken = true;
                         continue;
                     }
                 }
 
+                var hasValidPredecessor = mLastAccepted != null && !mSequenceBroken;
                 mIntervals.add(rr);
                 mSecondMarks.add(mSecondsCount);
+                mHasValidPredecessor.add(hasValidPredecessor);
                 mLastAccepted = rr;
+                mSequenceBroken = false;
                 mAcceptedBeats++;
                 acceptedThisSec++;
             }
@@ -153,6 +165,11 @@ class HrvRmssdWindow {
         if (start > 0) {
             mIntervals = mIntervals.slice(start, null) as Array<Float>;
             mSecondMarks = mSecondMarks.slice(start, null) as Array<Number>;
+            mHasValidPredecessor = mHasValidPredecessor.slice(start, null) as Array<Boolean>;
+            // The first retained interval has no retained predecessor.
+            if (mHasValidPredecessor.size() > 0) {
+                mHasValidPredecessor[0] = false;
+            }
         }
 
         // No live accepted beat this second → do not publish (signal drop / all rejected).
@@ -182,9 +199,11 @@ class HrvRmssdWindow {
         var prev = mIntervals[0];
         for (var i = 1; i < mIntervals.size(); i++) {
             var cur = mIntervals[i];
-            var diff = cur - prev;
-            sumSquares += diff * diff;
-            count++;
+            if (mHasValidPredecessor[i]) {
+                var diff = cur - prev;
+                sumSquares += diff * diff;
+                count++;
+            }
             prev = cur;
         }
 
@@ -199,6 +218,8 @@ class HrvRmssdWindow {
         mSecondsCount = 0;
         mIntervals = [] as Array<Float>;
         mSecondMarks = [] as Array<Number>;
+        mHasValidPredecessor = [] as Array<Boolean>;
+        mSequenceBroken = true;
         mLastAccepted = null;
         mLastRmssd = null;
         mRawBeats = 0;
